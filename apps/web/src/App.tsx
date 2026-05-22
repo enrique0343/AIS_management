@@ -13,6 +13,7 @@ import Inventario from "./pages/Inventario";
 import Catalogos from "./pages/Catalogos";
 import Profesionales from "./pages/Profesionales";
 import Usuarios from "./pages/Usuarios";
+import FacturaPrint from "./pages/FacturaPrint";
 
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -25,6 +26,14 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/facturas/:id/print"
+        element={
+          <Protected>
+            <FacturaPrint />
+          </Protected>
+        }
+      />
       <Route
         path="/"
         element={

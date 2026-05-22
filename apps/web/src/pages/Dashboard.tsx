@@ -13,11 +13,23 @@ type VencimientoRow = {
   cantidad: number;
 };
 
+type Stats = {
+  productos: number;
+  pacientes: number;
+  episodios_activos: number;
+  cirugias_futuras: number;
+  facturas_pendientes: number;
+  monto_pendiente: number;
+  ingresos_hoy: number;
+};
+
 export default function Dashboard() {
   const [reorden, setReorden] = useState<ReordenRow[]>([]);
   const [vencen, setVencen] = useState<VencimientoRow[]>([]);
+  const [stats, setStats] = useState<Stats | null>(null);
 
   useEffect(() => {
+    api.get<Stats>("/api/dashboard").then(setStats).catch(() => {});
     api
       .get<{ data: ReordenRow[] }>("/api/productos/_alertas/reorden")
       .then((r) => setReorden(r.data))
@@ -28,9 +40,29 @@ export default function Dashboard() {
       .catch(() => {});
   }, []);
 
+  const Stat = ({ label, value, accent }: { label: string; value: string | number; accent?: string }) => (
+    <div className="card">
+      <div className="text-xs uppercase text-slate-500">{label}</div>
+      <div className={`text-2xl font-semibold ${accent ?? ""}`}>{value}</div>
+    </div>
+  );
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Panel</h1>
+
+      {stats && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Stat label="Productos activos" value={stats.productos} />
+          <Stat label="Pacientes" value={stats.pacientes} />
+          <Stat label="Episodios activos" value={stats.episodios_activos} accent="text-blue-600" />
+          <Stat label="Cirugias futuras" value={stats.cirugias_futuras} accent="text-amber-600" />
+          <Stat label="Facturas pendientes" value={stats.facturas_pendientes} />
+          <Stat label="Monto pendiente" value={`$${Number(stats.monto_pendiente).toFixed(2)}`} accent="text-red-600" />
+          <Stat label="Ingresos hoy" value={`$${Number(stats.ingresos_hoy).toFixed(2)}`} accent="text-green-600" />
+          <Stat label="Reorden" value={reorden.length} accent={reorden.length ? "text-red-600" : ""} />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <section className="card">

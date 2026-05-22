@@ -33,6 +33,26 @@ app.get("/api/health", (c) =>
   c.json({ ok: true, env: c.env.APP_ENV, ts: new Date().toISOString() })
 );
 
+app.get("/api/dashboard", async (c) => {
+  const queries = await Promise.all([
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM producto WHERE activo = 1`).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM paciente`).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM episodio_atencion WHERE estado = 'activo'`).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM cirugia WHERE date(fecha_programada) >= date('now') AND estado IN ('programada','en_curso')`).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS t FROM factura WHERE estado = 'pendiente'`).first<{ n: number; t: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(monto), 0) AS t FROM pago WHERE date(fecha) = date('now')`).first<{ t: number }>(),
+  ]);
+  return c.json({
+    productos: queries[0]?.n ?? 0,
+    pacientes: queries[1]?.n ?? 0,
+    episodios_activos: queries[2]?.n ?? 0,
+    cirugias_futuras: queries[3]?.n ?? 0,
+    facturas_pendientes: queries[4]?.n ?? 0,
+    monto_pendiente: queries[4]?.t ?? 0,
+    ingresos_hoy: queries[5]?.t ?? 0,
+  });
+});
+
 app.route("/api/auth", auth);
 app.route("/api/catalogos", catalogos);
 app.route("/api/productos", productos);

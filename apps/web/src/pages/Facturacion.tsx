@@ -7,15 +7,18 @@ type Pago = { id: number; metodo: string; monto: number; fecha: string; referenc
 
 export default function Facturacion() {
   const [items, setItems] = useState<Factura[]>([]);
+  const [episodios, setEpisodios] = useState<any[]>([]);
   const [episodioId, setEpisodioId] = useState("");
+  const [soloPendientes, setSoloPendientes] = useState(true);
   const [ivaPct, setIvaPct] = useState("13");
   const [reporte, setReporte] = useState<any[]>([]);
   const [detalle, setDetalle] = useState<{ factura: any; detalles: Detalle[]; pagos: Pago[] } | null>(null);
   const [cargos, setCargos] = useState<{ descripcion: string; cantidad: number; precio_unitario: number }[]>([]);
 
   const load = () => api.get<{ data: Factura[] }>("/api/facturacion/facturas").then((r) => setItems(r.data));
+  const loadEpisodios = () => api.get<{ data: any[] }>("/api/pacientes/episodios/list").then((r) => setEpisodios(r.data));
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadEpisodios(); }, []);
 
   const emitir = async () => {
     if (!episodioId) return;
@@ -66,10 +69,24 @@ export default function Facturacion() {
 
       <div className="card space-y-2">
         <h2 className="font-semibold">Emitir factura desde episodio</h2>
-        <div className="flex gap-2 items-end">
-          <div><label className="text-xs">ID Episodio</label><input className="input w-32" type="number" value={episodioId} onChange={(e) => setEpisodioId(e.target.value)} /></div>
+        <div className="flex gap-2 items-end flex-wrap">
+          <div className="flex-1 min-w-[300px]">
+            <label className="text-xs">Episodio</label>
+            <select className="input" value={episodioId} onChange={(e) => setEpisodioId(e.target.value)}>
+              <option value="">-- Seleccionar --</option>
+              {episodios
+                .filter((e) => !soloPendientes || e.consumos_pendientes > 0)
+                .map((e) => (
+                  <option key={e.id} value={e.id}>
+                    #{e.id} - {e.paciente} ({e.expediente}) - {e.fecha_inicio} [{e.estado}] - {e.consumos_pendientes} consumos pend
+                  </option>
+                ))}
+            </select>
+          </div>
+          <label className="text-xs flex items-center gap-1"><input type="checkbox" checked={soloPendientes} onChange={(e) => setSoloPendientes(e.target.checked)} /> Solo con pendientes</label>
           <div><label className="text-xs">IVA %</label><input className="input w-24" type="number" step="0.01" value={ivaPct} onChange={(e) => setIvaPct(e.target.value)} /></div>
           <button className="btn" onClick={emitir}>Emitir</button>
+          <button className="btn-secondary" onClick={() => { load(); loadEpisodios(); }}>Refrescar</button>
           <button className="btn-secondary" onClick={verReporte}>Ingresos de hoy</button>
         </div>
         <div className="text-xs font-medium text-slate-500 mt-2">Cargos extra (servicios, quirofano, etc)</div>
@@ -155,7 +172,7 @@ export default function Facturacion() {
             <div className="flex justify-end gap-2 pt-2">
               {detalle.factura.estado === "pendiente" && <button className="btn" onClick={() => pagar(detalle.factura.id)}>Registrar pago</button>}
               {detalle.factura.estado !== "anulada" && <button className="btn-danger" onClick={() => anular(detalle.factura.id)}>Anular</button>}
-              <button className="btn-secondary" onClick={() => window.print()}>Imprimir</button>
+              <a className="btn-secondary" target="_blank" rel="noreferrer" href={`/facturas/${detalle.factura.id}/print`}>Imprimir / PDF</a>
             </div>
           </div>
         </div>

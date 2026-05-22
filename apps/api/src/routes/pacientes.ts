@@ -103,6 +103,29 @@ app.put("/:id", requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
+// Listar episodios (filtrables por estado / paciente)
+app.get("/episodios/list", async (c) => {
+  const estado = c.req.query("estado");
+  const pacienteId = c.req.query("paciente_id");
+  const filt: string[] = ["1=1"];
+  const binds: unknown[] = [];
+  if (estado) { filt.push("e.estado = ?"); binds.push(estado); }
+  if (pacienteId) { filt.push("e.paciente_id = ?"); binds.push(parseInt(pacienteId, 10)); }
+  const { results } = await c.env.DB.prepare(
+    `SELECT e.id, e.paciente_id, e.estado, e.fecha_inicio, e.motivo,
+            p.nombres || ' ' || p.apellidos AS paciente, p.expediente,
+            (SELECT COUNT(*) FROM consumo_paciente WHERE episodio_id = e.id AND factura_detalle_id IS NULL) AS consumos_pendientes
+       FROM episodio_atencion e
+       JOIN paciente p ON p.id = e.paciente_id
+      WHERE ${filt.join(" AND ")}
+      ORDER BY e.fecha_inicio DESC
+      LIMIT 200`
+  )
+    .bind(...binds)
+    .all();
+  return c.json({ data: results });
+});
+
 // === Episodios ===
 app.post("/:id/episodios", requireRole("admin", "medico", "enfermeria"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);

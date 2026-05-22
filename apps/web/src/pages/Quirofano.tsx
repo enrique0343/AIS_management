@@ -15,6 +15,38 @@ type Cir = {
 };
 
 type Q = { id: number; nombre: string };
+
+function FragmentRow({ q, dias, cirugias, estadoColor, onClick }: {
+  q: Q;
+  dias: Date[];
+  cirugias: Cir[];
+  estadoColor: Record<string, string>;
+  onClick: (c: Cir) => void;
+}) {
+  return (
+    <>
+      <div className="text-xs font-semibold p-2 bg-slate-50 border-r">{q.nombre}</div>
+      {dias.map((d) => {
+        const fechaStr = d.toISOString().slice(0, 10);
+        const items = cirugias.filter((c) => c.quirofano === q.nombre && c.fecha_programada === fechaStr);
+        return (
+          <div key={d.toISOString()} className="min-h-[80px] p-1 border space-y-1">
+            {items.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => onClick(c)}
+                className={`block w-full text-left text-xs p-1 rounded border ${estadoColor[c.estado] ?? "bg-white"}`}
+              >
+                <div className="font-medium">{c.hora_inicio ?? "--"} {c.tipo_cirugia ?? ""}</div>
+                <div className="truncate">{c.paciente_nombre ?? "Sin paciente"}</div>
+              </button>
+            ))}
+          </div>
+        );
+      })}
+    </>
+  );
+}
 type Prod = { id: number; codigo: string; nombre: string };
 type Area = { id: number; nombre: string };
 type ConsumoCir = { id: number; producto: string; codigo: string; numero_lote: string | null; cantidad: number; costo_unitario_snapshot: number; consumo_id: number | null };
@@ -36,14 +68,42 @@ export default function Quirofano() {
     tipo_cirugia: "",
   });
 
-  const load = () => api.get<{ data: Cir[] }>("/api/quirofano/cirugias").then((r) => setCirugias(r.data));
+  const [vista, setVista] = useState<"tabla" | "calendario">("calendario");
+  const [semanaBase, setSemanaBase] = useState<Date>(() => {
+    const d = new Date();
+    const day = (d.getDay() + 6) % 7; // lunes = 0
+    d.setDate(d.getDate() - day);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  });
+  const dias = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(semanaBase); d.setDate(d.getDate() + i); return d;
+  });
+  const fmtDia = (d: Date) => d.toISOString().slice(0, 10);
 
+  const load = () => {
+    const desde = fmtDia(dias[0]);
+    const hasta = fmtDia(dias[6]);
+    const url = vista === "calendario"
+      ? `/api/quirofano/cirugias?desde=${desde}&hasta=${hasta}`
+      : "/api/quirofano/cirugias";
+    api.get<{ data: Cir[] }>(url).then((r) => setCirugias(r.data));
+  };
+
+  useEffect(() => { load(); }, [vista, semanaBase]);
   useEffect(() => {
-    load();
     api.get<{ data: Q[] }>("/api/quirofano/quirofanos").then((r) => setQuirofanos(r.data));
     api.get<{ data: Prod[] }>("/api/productos").then((r) => setProds(r.data));
     api.get<{ data: Area[] }>("/api/catalogos/areas").then((r) => setAreas(r.data));
   }, []);
+
+  const estadoColor: Record<string, string> = {
+    programada: "bg-blue-100 border-blue-300",
+    en_curso: "bg-amber-100 border-amber-300",
+    realizada: "bg-green-100 border-green-300",
+    suspendida: "bg-slate-100 border-slate-300",
+    cancelada: "bg-red-100 border-red-300",
+  };
 
   const abrirConsumos = async (c: Cir) => {
     const r = await api.get<{ data: ConsumoCir[] }>(`/api/quirofano/cirugias/${c.id}/consumos`);
@@ -95,10 +155,41 @@ export default function Quirofano() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-semibold">Quirofano</h1>
-        <button className="btn" onClick={() => setShow(true)}>Programar cirugia</button>
+        <div className="flex gap-2 items-center">
+          <div className="flex border rounded overflow-hidden">
+            <button className={`px-3 py-1 text-sm ${vista === "calendario" ? "bg-blue-600 text-white" : "bg-white"}`} onClick={() => setVista("calendario")}>Calendario</button>
+            <button className={`px-3 py-1 text-sm ${vista === "tabla" ? "bg-blue-600 text-white" : "bg-white"}`} onClick={() => setVista("tabla")}>Tabla</button>
+          </div>
+          {vista === "calendario" && (
+            <div className="flex gap-1 items-center">
+              <button className="btn-secondary text-xs" onClick={() => { const d = new Date(semanaBase); d.setDate(d.getDate() - 7); setSemanaBase(d); }}>&laquo;</button>
+              <span className="text-xs px-2">{fmtDia(dias[0])} a {fmtDia(dias[6])}</span>
+              <button className="btn-secondary text-xs" onClick={() => { const d = new Date(semanaBase); d.setDate(d.getDate() + 7); setSemanaBase(d); }}>&raquo;</button>
+            </div>
+          )}
+          <button className="btn" onClick={() => setShow(true)}>Programar cirugia</button>
+        </div>
       </div>
+
+      {vista === "calendario" && (
+        <div className="card overflow-auto">
+          <div className="grid grid-cols-8 gap-1 min-w-[800px]">
+            <div className="text-xs font-semibold p-2">Quirofano</div>
+            {dias.map((d) => (
+              <div key={d.toISOString()} className="text-xs font-semibold p-2 text-center bg-slate-100">
+                {["L", "M", "Mi", "J", "V", "S", "D"][((d.getDay() + 6) % 7)]} {d.getDate()}/{d.getMonth() + 1}
+              </div>
+            ))}
+            {quirofanos.map((q) => (
+              <FragmentRow key={q.id} q={q} dias={dias} cirugias={cirugias} estadoColor={estadoColor} onClick={abrirConsumos} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {vista === "tabla" && (
       <div className="card overflow-auto">
         <table className="table">
           <thead>
@@ -124,6 +215,7 @@ export default function Quirofano() {
           </tbody>
         </table>
       </div>
+      )}
 
       {consumosCir && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
