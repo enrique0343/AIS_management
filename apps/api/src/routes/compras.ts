@@ -36,7 +36,17 @@ app.get("/ordenes/:id", async (c) => {
   )
     .bind(id)
     .all();
-  return c.json({ orden: oc, detalles: det.results });
+  const recs = await c.env.DB.prepare(
+    `SELECT r.id, r.fecha, r.n_factura_proveedor, r.doc_r2_key,
+            a.nombre AS area_destino, u.nombre AS usuario
+       FROM recepcion_compra r
+       LEFT JOIN area a ON a.id = r.area_destino_id
+       LEFT JOIN usuario u ON u.id = r.usuario_id
+      WHERE r.orden_id = ? ORDER BY r.fecha DESC`
+  )
+    .bind(id)
+    .all();
+  return c.json({ orden: oc, detalles: det.results, recepciones: recs.results });
 });
 
 // Crear OC

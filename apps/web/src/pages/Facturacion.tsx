@@ -36,10 +36,25 @@ export default function Facturacion() {
     }
   };
 
+  const [repDesde, setRepDesde] = useState(() => new Date().toISOString().slice(0, 10));
+  const [repHasta, setRepHasta] = useState(() => new Date().toISOString().slice(0, 10));
+
   const verReporte = async () => {
-    const hoy = new Date().toISOString().slice(0, 10);
-    const r = await api.get<{ data: any[] }>(`/api/facturacion/reporte-ingresos?desde=${hoy}&hasta=${hoy}`);
+    const r = await api.get<{ data: any[] }>(`/api/facturacion/reporte-ingresos?desde=${repDesde}&hasta=${repHasta}`);
     setReporte(r.data);
+  };
+
+  const exportarCSV = () => {
+    if (!reporte.length) return;
+    const headers = "dia,metodo,cantidad,total\n";
+    const rows = reporte.map((r) => `${r.dia},${r.metodo},${r.cantidad},${r.total}`).join("\n");
+    const blob = new Blob([headers + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ingresos_${repDesde}_${repHasta}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const abrir = async (id: number) => {
@@ -87,7 +102,12 @@ export default function Facturacion() {
           <div><label className="text-xs">IVA %</label><input className="input w-24" type="number" step="0.01" value={ivaPct} onChange={(e) => setIvaPct(e.target.value)} /></div>
           <button className="btn" onClick={emitir}>Emitir</button>
           <button className="btn-secondary" onClick={() => { load(); loadEpisodios(); }}>Refrescar</button>
-          <button className="btn-secondary" onClick={verReporte}>Ingresos de hoy</button>
+        </div>
+        <div className="flex gap-2 items-end flex-wrap border-t pt-2 mt-2">
+          <div><label className="text-xs">Reporte desde</label><input className="input" type="date" value={repDesde} onChange={(e) => setRepDesde(e.target.value)} /></div>
+          <div><label className="text-xs">hasta</label><input className="input" type="date" value={repHasta} onChange={(e) => setRepHasta(e.target.value)} /></div>
+          <button className="btn-secondary" onClick={verReporte}>Generar</button>
+          {!!reporte.length && <button className="btn-secondary" onClick={exportarCSV}>Exportar CSV</button>}
         </div>
         <div className="text-xs font-medium text-slate-500 mt-2">Cargos extra (servicios, quirofano, etc)</div>
         {cargos.map((c, i) => (

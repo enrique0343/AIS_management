@@ -40,6 +40,12 @@ export default function Compras() {
   };
 
   const [facturaFile, setFacturaFile] = useState<File | null>(null);
+  const [historico, setHistorico] = useState<any | null>(null);
+
+  const verHist = async (oc: OC) => {
+    const r = await api.get<any>(`/api/compras/ordenes/${oc.id}`);
+    setHistorico({ ...r, oc });
+  };
 
   const openRec = async (oc: OC) => {
     const r = await api.get<{ data: any[] }>(`/api/compras/ordenes/${oc.id}/pendientes`);
@@ -115,7 +121,8 @@ export default function Compras() {
                 <td>{o.proveedor}</td>
                 <td>{o.estado}</td>
                 <td>{Number(o.total).toFixed(2)}</td>
-                <td>
+                <td className="space-x-1">
+                  <button className="btn-secondary text-xs" onClick={() => verHist(o)}>Ver</button>
                   {(o.estado === "borrador" || o.estado === "enviada" || o.estado === "recibida_parcial") && (
                     <button className="btn-secondary text-xs" onClick={() => openRec(o)}>Recibir</button>
                   )}
@@ -207,6 +214,49 @@ export default function Compras() {
               <button className="btn-secondary" onClick={() => setShowRec(null)}>Cancelar</button>
               <button className="btn" onClick={submitRec}>Confirmar recepcion</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {historico && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="card w-full max-w-3xl space-y-3 max-h-[90vh] overflow-auto">
+            <div className="flex justify-between items-start">
+              <div>
+                <h2 className="font-semibold">{historico.oc.numero}</h2>
+                <div className="text-sm text-slate-500">{historico.oc.proveedor} - {historico.oc.estado}</div>
+              </div>
+              <button className="btn-secondary" onClick={() => setHistorico(null)}>Cerrar</button>
+            </div>
+            <h3 className="font-semibold text-sm">Lineas</h3>
+            <table className="table">
+              <thead><tr><th>Producto</th><th>Cant</th><th>Costo</th><th>Subtotal</th></tr></thead>
+              <tbody>
+                {historico.detalles.map((d: any) => (
+                  <tr key={d.id}><td>{d.producto}</td><td>{d.cantidad}</td><td>{Number(d.costo_unitario).toFixed(2)}</td><td>{Number(d.subtotal).toFixed(2)}</td></tr>
+                ))}
+              </tbody>
+            </table>
+            <h3 className="font-semibold text-sm">Recepciones</h3>
+            {!historico.recepciones?.length ? (
+              <div className="text-sm text-slate-500">Sin recepciones aun</div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>ID</th><th>Fecha</th><th>Area</th><th>N. Factura</th><th>Usuario</th><th>Doc</th></tr></thead>
+                <tbody>
+                  {historico.recepciones.map((r: any) => (
+                    <tr key={r.id}>
+                      <td>#{r.id}</td>
+                      <td>{r.fecha}</td>
+                      <td>{r.area_destino ?? "-"}</td>
+                      <td>{r.n_factura_proveedor ?? "-"}</td>
+                      <td>{r.usuario ?? "-"}</td>
+                      <td>{r.doc_r2_key ? <a className="text-blue-600 hover:underline text-xs" href={`/api/compras/recepciones/${r.id}/factura`} target="_blank" rel="noreferrer">Descargar</a> : "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
