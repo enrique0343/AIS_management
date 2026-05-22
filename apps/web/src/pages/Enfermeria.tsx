@@ -16,7 +16,7 @@ export default function Enfermeria() {
   const [consumos, setConsumos] = useState<Consumo[]>([]);
   const [prods, setProds] = useState<Prod[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
-  const [form, setForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1, receta_especial_id: "" });
+  const [form, setForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1 });
 
   useEffect(() => {
     api.get<{ data: Prod[] }>("/api/productos").then((r) => setProds(r.data));
@@ -55,9 +55,8 @@ export default function Enfermeria() {
       producto_id: Number(form.producto_id),
       area_id: Number(form.area_id),
       cantidad: Number(form.cantidad),
-      receta_especial_id: form.receta_especial_id ? Number(form.receta_especial_id) : null,
     });
-    setForm({ producto_id: "", area_id: form.area_id, cantidad: 1, receta_especial_id: "" });
+    setForm({ producto_id: "", area_id: form.area_id, cantidad: 1 });
     elegirEpisodio(episodio);
   };
 
@@ -117,8 +116,10 @@ export default function Enfermeria() {
                 </select>
                 <input className="input col-span-2" type="number" placeholder="Cant" value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
                 <button className="btn col-span-1" onClick={registrar}>+</button>
-                <input className="input col-span-12" placeholder="ID receta especial (si controlado)" value={form.receta_especial_id} onChange={(e) => setForm({ ...form, receta_especial_id: e.target.value })} />
               </div>
+              <p className="text-xs text-slate-500">
+                Productos controlados: el registro fisico en libro autorizado por SRS y la receta especial retenida se manejan fuera del sistema.
+              </p>
 
               <h3 className="font-semibold">Consumos del episodio</h3>
               <table className="table">

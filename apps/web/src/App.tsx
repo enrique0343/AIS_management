@@ -10,7 +10,6 @@ import Enfermeria from "./pages/Enfermeria";
 import Facturacion from "./pages/Facturacion";
 import Quirofano from "./pages/Quirofano";
 import Inventario from "./pages/Inventario";
-import LibroControlados from "./pages/LibroControlados";
 
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -39,7 +38,6 @@ function AppRoutes() {
         <Route path="enfermeria" element={<Enfermeria />} />
         <Route path="facturacion" element={<Facturacion />} />
         <Route path="quirofano" element={<Quirofano />} />
-        <Route path="controlados" element={<LibroControlados />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

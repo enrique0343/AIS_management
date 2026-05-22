@@ -6,7 +6,6 @@ const menu = [
   { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"] },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"] },
   { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"] },
-  { to: "/controlados", label: "Controlados", roles: ["admin", "jefe_farmacia_central", "farmaceutico"] },
   { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"] },
   { to: "/enfermeria", label: "Enfermeria", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
   { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"] },

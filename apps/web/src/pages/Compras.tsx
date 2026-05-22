@@ -168,7 +168,7 @@ export default function Compras() {
                 ))}
               </tbody>
             </table>
-            <p className="text-xs text-slate-500">Lote/vence requeridos para productos con categoria lote. No. autorizacion SRS requerido para controlados (§7.2).</p>
+            <p className="text-xs text-slate-500">Lote/vence requeridos para productos con categoria lote. No. autorizacion SRS opcional (registro fisico).</p>
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setShowRec(null)}>Cancelar</button>
               <button className="btn" onClick={submitRec}>Confirmar recepcion</button>

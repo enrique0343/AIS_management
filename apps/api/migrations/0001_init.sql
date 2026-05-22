@@ -280,20 +280,11 @@ CREATE TABLE episodio_atencion (
 );
 CREATE INDEX idx_episodio_paciente ON episodio_atencion(paciente_id);
 
-CREATE TABLE receta_especial_retenida (
-  id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-  numero_serie            TEXT NOT NULL UNIQUE,
-  episodio_id             INTEGER REFERENCES episodio_atencion(id),
-  paciente_id             INTEGER NOT NULL REFERENCES paciente(id),
-  medico_id               INTEGER NOT NULL REFERENCES profesional_medico(id),
-  fecha                   TEXT NOT NULL DEFAULT (date('now')),
-  estado                  TEXT NOT NULL DEFAULT 'emitida' CHECK (estado IN ('emitida','dispensada','anulada')),
-  original_r2_key         TEXT,
-  duplicado_r2_key        TEXT,
-  triplicado_r2_key       TEXT,
-  sello_dispensada_fecha  TEXT,
-  observaciones           TEXT
-);
+-- Receta especial retenida y libro de controlados son CONTROLES FISICOS
+-- exigidos por la normativa SRS y NO se modelan en el sistema. El sistema
+-- solo registra el movimiento de inventario; el respaldo documental fisico
+-- (libro autorizado, recetas en triplicado, sello DISPENSADA) lo gestiona
+-- el personal designado.
 
 CREATE TABLE consumo_paciente (
   id                          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -306,7 +297,6 @@ CREATE TABLE consumo_paciente (
   precio_venta_snapshot       REAL NOT NULL DEFAULT 0,
   fecha                       TEXT NOT NULL DEFAULT (datetime('now')),
   usuario_id                  INTEGER REFERENCES usuario(id),
-  receta_especial_id          INTEGER REFERENCES receta_especial_retenida(id),
   factura_detalle_id          INTEGER, -- se llena cuando se factura
   observaciones               TEXT
 );

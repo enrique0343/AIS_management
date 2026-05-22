@@ -152,9 +152,6 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
     if (prod.requiere_lote_vencimiento && (!item.lote_numero || !item.fecha_vencimiento)) {
       return c.json({ error: "lote_requerido", producto_id: item.producto_id }, 400);
     }
-    if (prod.es_controlado && !item.n_autorizacion_srs) {
-      return c.json({ error: "n_autorizacion_srs_requerido", producto_id: item.producto_id }, 400);
-    }
 
     // Lote (si aplica)
     let loteId: number | null = null;

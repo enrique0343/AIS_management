@@ -63,37 +63,7 @@ app.get("/movimientos", async (c) => {
   return c.json({ data: results });
 });
 
-// Libro de controlados (SRS §7.4.a / §7.6)
-app.get("/libro-controlados", async (c) => {
-  const productoId = c.req.query("producto_id");
-  const desde = c.req.query("desde");
-  const hasta = c.req.query("hasta");
-  const filt: string[] = ["p.es_controlado = 1"];
-  const binds: unknown[] = [];
-  if (productoId) { filt.push("m.producto_id = ?"); binds.push(parseInt(productoId, 10)); }
-  if (desde) { filt.push("date(m.fecha) >= ?"); binds.push(desde); }
-  if (hasta) { filt.push("date(m.fecha) <= ?"); binds.push(hasta); }
-  const { results } = await c.env.DB.prepare(
-    `SELECT m.fecha, m.tipo, p.codigo, p.nombre AS producto,
-            l.numero_lote, l.fecha_vencimiento,
-            ao.nombre AS area_origen, ad.nombre AS area_destino,
-            m.cantidad, m.n_autorizacion_srs, m.referencia_tipo, m.referencia_id,
-            u.nombre AS responsable
-       FROM movimiento_inventario m
-       JOIN producto p ON p.id = m.producto_id
-       LEFT JOIN lote l ON l.id = m.lote_id
-       LEFT JOIN area ao ON ao.id = m.area_origen_id
-       LEFT JOIN area ad ON ad.id = m.area_destino_id
-       LEFT JOIN usuario u ON u.id = m.usuario_id
-      WHERE ${filt.join(" AND ")}
-      ORDER BY p.nombre, m.fecha`
-  )
-    .bind(...binds)
-    .all();
-  return c.json({ data: results });
-});
-
-// Transferencia entre areas (SRS §7.5)
+// Transferencia entre areas
 app.post(
   "/transferencias",
   requireRole("admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"),
@@ -120,9 +90,6 @@ app.post(
       .bind(b.producto_id)
       .first<{ es_controlado: number; cpp: number }>();
     if (!prod) return c.json({ error: "producto_no_encontrado" }, 400);
-    if (prod.es_controlado && !b.n_autorizacion_srs) {
-      return c.json({ error: "n_autorizacion_srs_requerido" }, 400);
-    }
 
     for (const step of plan as { lote_id: number | null; tomar: number }[]) {
       // Descontar origen
