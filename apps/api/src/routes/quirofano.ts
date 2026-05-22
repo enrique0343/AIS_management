@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Bindings, AppVariables } from "../env";
 import { requireAuth, requireRole } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
+import { planFEFO } from "../lib/fefo";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 app.use("*", requireAuth);
@@ -121,6 +122,82 @@ app.post(
   }
 );
 
+// Registrar consumo intra-cirugia (descarga del area destino, FEFO).
+// Si no hay paciente aun, el consumo queda asociado solo a la cirugia.
+// Al cerrarla con estado=realizada, los consumos se vuelcan a consumo_paciente
+// si hay paciente y un episodio abierto del mismo (se abre uno si no existe).
+app.post(
+  "/cirugias/:id/consumos",
+  requireRole("admin", "enfermeria", "medico", "programador_quirofano"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const b = await c.req.json().catch(() => null);
+    if (!b?.producto_id || !b?.area_id || !b?.cantidad) return c.json({ error: "datos_invalidos" }, 400);
+
+    const cir = await c.env.DB.prepare(`SELECT id, estado FROM cirugia WHERE id = ?`)
+      .bind(id)
+      .first<{ id: number; estado: string }>();
+    if (!cir) return c.json({ error: "cirugia_no_encontrada" }, 404);
+    if (cir.estado === "realizada" || cir.estado === "cancelada") {
+      return c.json({ error: "cirugia_cerrada" }, 400);
+    }
+
+    const prod = await c.env.DB.prepare(
+      `SELECT id, costo_promedio_ponderado AS cpp FROM producto WHERE id = ?`
+    )
+      .bind(b.producto_id)
+      .first<{ id: number; cpp: number }>();
+    if (!prod) return c.json({ error: "producto_no_encontrado" }, 404);
+
+    let plan;
+    try {
+      plan = await planFEFO(c.env, b.producto_id, b.area_id, Number(b.cantidad));
+    } catch (e: any) {
+      return c.json({ error: e.message }, 400);
+    }
+    for (const step of plan) {
+      await c.env.DB.prepare(
+        `UPDATE existencia SET cantidad = cantidad - ?
+           WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id,0) = COALESCE(?,0)`
+      )
+        .bind(step.tomar, b.producto_id, b.area_id, step.lote_id)
+        .run();
+      await c.env.DB.prepare(
+        `INSERT INTO movimiento_inventario
+           (tipo, producto_id, lote_id, area_origen_id, cantidad, costo_unitario, usuario_id, referencia_tipo, referencia_id, observaciones)
+         VALUES ('consumo_paciente', ?, ?, ?, ?, ?, ?, 'cirugia', ?, 'cirugia ' || ?)`
+      )
+        .bind(b.producto_id, step.lote_id, b.area_id, step.tomar, prod.cpp,
+              c.get("session")!.usuario_id, id, id)
+        .run();
+      await c.env.DB.prepare(
+        `INSERT INTO cirugia_consumo (cirugia_id, producto_id, lote_id, area_id, cantidad, costo_unitario_snapshot)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+        .bind(id, b.producto_id, step.lote_id, b.area_id, step.tomar, prod.cpp)
+        .run();
+    }
+    return c.json({ ok: true });
+  }
+);
+
+app.get("/cirugias/:id/consumos", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const { results } = await c.env.DB.prepare(
+    `SELECT cc.id, cc.cantidad, cc.costo_unitario_snapshot,
+            p.nombre AS producto, p.codigo, l.numero_lote, l.fecha_vencimiento,
+            cc.consumo_id
+       FROM cirugia_consumo cc
+       JOIN producto p ON p.id = cc.producto_id
+       LEFT JOIN lote l ON l.id = cc.lote_id
+      WHERE cc.cirugia_id = ?
+      ORDER BY cc.id`
+  )
+    .bind(id)
+    .all();
+  return c.json({ data: results });
+});
+
 app.post(
   "/cirugias/:id/estado",
   requireRole("admin", "programador_quirofano", "medico", "enfermeria"),
@@ -134,8 +211,75 @@ app.post(
         paciente_id: number | null;
       }>();
       if (!cir?.paciente_id) return c.json({ error: "paciente_requerido_para_cerrar" }, 400);
+
+      // Buscar episodio activo del paciente, o crear uno nuevo asociado a quirofano
+      let ep = await c.env.DB.prepare(
+        `SELECT id FROM episodio_atencion WHERE paciente_id = ? AND estado='activo' ORDER BY id DESC LIMIT 1`
+      )
+        .bind(cir.paciente_id)
+        .first<{ id: number }>();
+      if (!ep) {
+        const ins = await c.env.DB.prepare(
+          `INSERT INTO episodio_atencion (paciente_id, motivo) VALUES (?, 'Cirugia')`
+        )
+          .bind(cir.paciente_id)
+          .run();
+        ep = { id: ins.meta.last_row_id as number };
+      }
+
+      // Volcar consumos no facturados (que aun no tienen consumo_id)
+      const pendientes = await c.env.DB.prepare(
+        `SELECT cc.id, cc.producto_id, cc.lote_id, cc.area_id, cc.cantidad, cc.costo_unitario_snapshot,
+                p.precio_venta
+           FROM cirugia_consumo cc
+           JOIN producto p ON p.id = cc.producto_id
+          WHERE cc.cirugia_id = ? AND cc.consumo_id IS NULL`
+      )
+        .bind(id)
+        .all<{
+          id: number;
+          producto_id: number;
+          lote_id: number | null;
+          area_id: number | null;
+          cantidad: number;
+          costo_unitario_snapshot: number;
+          precio_venta: number;
+        }>();
+
+      for (const cc of pendientes.results ?? []) {
+        if (!cc.area_id) continue; // sin area no podemos asociar
+        const ins = await c.env.DB.prepare(
+          `INSERT INTO consumo_paciente
+             (episodio_id, producto_id, lote_id, area_id, cantidad,
+              costo_unitario_snapshot, precio_venta_snapshot, usuario_id, observaciones)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Cirugia #' || ?)`
+        )
+          .bind(
+            ep.id,
+            cc.producto_id,
+            cc.lote_id,
+            cc.area_id,
+            cc.cantidad,
+            cc.costo_unitario_snapshot,
+            cc.precio_venta,
+            c.get("session")!.usuario_id,
+            id
+          )
+          .run();
+        await c.env.DB.prepare(`UPDATE cirugia_consumo SET consumo_id = ? WHERE id = ?`)
+          .bind(ins.meta.last_row_id, cc.id)
+          .run();
+      }
     }
     await c.env.DB.prepare(`UPDATE cirugia SET estado = ? WHERE id = ?`).bind(b.estado, id).run();
+    await logAudit(c.env, {
+      usuario_id: c.get("session")!.usuario_id,
+      accion: "cambio_estado_cirugia",
+      entidad: "cirugia",
+      entidad_id: id,
+      payload: { estado: b.estado },
+      ip: c.get("ip"),
+    });
     return c.json({ ok: true });
   }
 );

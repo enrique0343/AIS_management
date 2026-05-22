@@ -89,6 +89,29 @@ app.post("/ordenes", requireRole("admin", "jefe_farmacia_central"), async (c) =>
   return c.json({ id: ordenId, numero });
 });
 
+// Detalle con pendientes por linea de una OC
+app.get("/ordenes/:id/pendientes", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const { results } = await c.env.DB.prepare(
+    `SELECT d.producto_id, p.nombre AS producto, p.codigo, d.cantidad AS ordenado, d.costo_unitario,
+            COALESCE(rcv.recibido, 0) AS recibido,
+            MAX(d.cantidad - COALESCE(rcv.recibido, 0), 0) AS pendiente
+       FROM orden_compra_detalle d
+       JOIN producto p ON p.id = d.producto_id
+       LEFT JOIN (
+         SELECT rd.producto_id, SUM(rd.cantidad) AS recibido
+           FROM recepcion_compra_detalle rd
+           JOIN recepcion_compra r ON r.id = rd.recepcion_id
+          WHERE r.orden_id = ?
+          GROUP BY rd.producto_id
+       ) rcv ON rcv.producto_id = d.producto_id
+      WHERE d.orden_id = ?`
+  )
+    .bind(id, id)
+    .all();
+  return c.json({ data: results });
+});
+
 // Sugerencias de compra por reorden
 app.get("/sugerencias", async (c) => {
   const { results } = await c.env.DB.prepare(
@@ -232,9 +255,28 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
       .run();
   }
 
-  // Marcar OC como recibida (simplificado: total). Una mejora seria detectar parcial.
-  await c.env.DB.prepare(`UPDATE orden_compra SET estado = 'recibida' WHERE id = ?`)
-    .bind(d.orden_compra_id)
+  // Estado de la OC segun cantidades recibidas acumuladas vs ordenadas
+  const pendientes = await c.env.DB.prepare(
+    `SELECT
+        SUM(MAX(d.cantidad - COALESCE(rcv.recibido, 0), 0)) AS pendiente,
+        SUM(COALESCE(rcv.recibido, 0)) AS recibido_total
+       FROM orden_compra_detalle d
+       LEFT JOIN (
+         SELECT rd.producto_id, SUM(rd.cantidad) AS recibido
+           FROM recepcion_compra_detalle rd
+           JOIN recepcion_compra r ON r.id = rd.recepcion_id
+          WHERE r.orden_id = ?
+          GROUP BY rd.producto_id
+       ) rcv ON rcv.producto_id = d.producto_id
+      WHERE d.orden_id = ?`
+  )
+    .bind(d.orden_compra_id, d.orden_compra_id)
+    .first<{ pendiente: number; recibido_total: number }>();
+  const nuevoEstado =
+    (pendientes?.pendiente ?? 0) <= 0 ? "recibida" :
+    (pendientes?.recibido_total ?? 0) > 0 ? "recibida_parcial" : oc.estado;
+  await c.env.DB.prepare(`UPDATE orden_compra SET estado = ? WHERE id = ?`)
+    .bind(nuevoEstado, d.orden_compra_id)
     .run();
 
   await logAudit(c.env, {
@@ -247,6 +289,53 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
   });
 
   return c.json({ id: recepcionId, ok: true });
+});
+
+// Subir factura del proveedor (PDF/imagen) a R2 asociado a la recepcion
+app.post(
+  "/recepciones/:id/factura",
+  requireRole("admin", "jefe_farmacia_central"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const rec = await c.env.DB.prepare(`SELECT id FROM recepcion_compra WHERE id = ?`).bind(id).first();
+    if (!rec) return c.json({ error: "recepcion_no_encontrada" }, 404);
+
+    const form = await c.req.formData().catch(() => null);
+    const file = form?.get("file") as unknown as
+      | { name: string; size: number; type: string; arrayBuffer(): Promise<ArrayBuffer> }
+      | null;
+    if (!file || typeof file === "string" || typeof file.arrayBuffer !== "function") {
+      return c.json({ error: "archivo_requerido" }, 400);
+    }
+    if (file.size > 10 * 1024 * 1024) return c.json({ error: "archivo_muy_grande_10mb_max" }, 400);
+
+    const ext = (file.name.split(".").pop() ?? "bin").toLowerCase();
+    const key = `recepciones/${id}/${Date.now()}.${ext}`;
+    await c.env.DOCS.put(key, await file.arrayBuffer(), {
+      httpMetadata: { contentType: file.type || "application/octet-stream" },
+    });
+    await c.env.DB.prepare(`UPDATE recepcion_compra SET doc_r2_key = ? WHERE id = ?`)
+      .bind(key, id)
+      .run();
+    return c.json({ ok: true, key });
+  }
+);
+
+// Descargar factura del proveedor desde R2
+app.get("/recepciones/:id/factura", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const row = await c.env.DB.prepare(`SELECT doc_r2_key FROM recepcion_compra WHERE id = ?`)
+    .bind(id)
+    .first<{ doc_r2_key: string | null }>();
+  if (!row?.doc_r2_key) return c.json({ error: "sin_documento" }, 404);
+  const obj = await c.env.DOCS.get(row.doc_r2_key);
+  if (!obj) return c.json({ error: "no_encontrado_en_r2" }, 404);
+  return new Response(obj.body, {
+    headers: {
+      "Content-Type": obj.httpMetadata?.contentType ?? "application/octet-stream",
+      "Content-Disposition": `inline; filename="${row.doc_r2_key.split("/").pop()}"`,
+    },
+  });
 });
 
 export default app;

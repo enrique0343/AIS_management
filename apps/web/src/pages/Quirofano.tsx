@@ -15,10 +15,17 @@ type Cir = {
 };
 
 type Q = { id: number; nombre: string };
+type Prod = { id: number; codigo: string; nombre: string };
+type Area = { id: number; nombre: string };
+type ConsumoCir = { id: number; producto: string; codigo: string; numero_lote: string | null; cantidad: number; costo_unitario_snapshot: number; consumo_id: number | null };
 
 export default function Quirofano() {
   const [cirugias, setCirugias] = useState<Cir[]>([]);
   const [quirofanos, setQuirofanos] = useState<Q[]>([]);
+  const [prods, setProds] = useState<Prod[]>([]);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [consumosCir, setConsumosCir] = useState<{ cirugia: Cir; lista: ConsumoCir[] } | null>(null);
+  const [cForm, setCForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1 });
   const [show, setShow] = useState(false);
   const [form, setForm] = useState<any>({
     quirofano_id: "",
@@ -34,7 +41,29 @@ export default function Quirofano() {
   useEffect(() => {
     load();
     api.get<{ data: Q[] }>("/api/quirofano/quirofanos").then((r) => setQuirofanos(r.data));
+    api.get<{ data: Prod[] }>("/api/productos").then((r) => setProds(r.data));
+    api.get<{ data: Area[] }>("/api/catalogos/areas").then((r) => setAreas(r.data));
   }, []);
+
+  const abrirConsumos = async (c: Cir) => {
+    const r = await api.get<{ data: ConsumoCir[] }>(`/api/quirofano/cirugias/${c.id}/consumos`);
+    setConsumosCir({ cirugia: c, lista: r.data });
+  };
+
+  const regCons = async () => {
+    if (!consumosCir) return;
+    try {
+      await api.post(`/api/quirofano/cirugias/${consumosCir.cirugia.id}/consumos`, {
+        producto_id: Number(cForm.producto_id),
+        area_id: Number(cForm.area_id),
+        cantidad: Number(cForm.cantidad),
+      });
+      setCForm({ ...cForm, producto_id: "", cantidad: 1 });
+      abrirConsumos(consumosCir.cirugia);
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
 
   const submit = async () => {
     await api.post("/api/quirofano/cirugias", {
@@ -87,6 +116,7 @@ export default function Quirofano() {
                 <td>{c.estado}</td>
                 <td className="space-x-1">
                   {!c.paciente_id && <button className="btn-secondary text-xs" onClick={() => asociar(c.id)}>Asociar</button>}
+                  <button className="btn-secondary text-xs" onClick={() => abrirConsumos(c)}>Consumos</button>
                   <button className="btn-secondary text-xs" onClick={() => cambiarEstado(c.id)}>Estado</button>
                 </td>
               </tr>
@@ -94,6 +124,46 @@ export default function Quirofano() {
           </tbody>
         </table>
       </div>
+
+      {consumosCir && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="card w-full max-w-3xl space-y-3 max-h-[90vh] overflow-auto">
+            <div className="flex justify-between">
+              <h2 className="font-semibold">Consumos - {consumosCir.cirugia.codigo}</h2>
+              <button className="btn-secondary" onClick={() => setConsumosCir(null)}>Cerrar</button>
+            </div>
+            <div className="grid grid-cols-12 gap-2">
+              <select className="input col-span-5" value={cForm.producto_id} onChange={(e) => setCForm({ ...cForm, producto_id: e.target.value })}>
+                <option value="">-- Producto --</option>
+                {prods.map((p) => <option key={p.id} value={p.id}>{p.codigo} - {p.nombre}</option>)}
+              </select>
+              <select className="input col-span-4" value={cForm.area_id} onChange={(e) => setCForm({ ...cForm, area_id: e.target.value })}>
+                <option value="">-- Area stock --</option>
+                {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+              </select>
+              <input className="input col-span-2" type="number" placeholder="Cant" value={cForm.cantidad} onChange={(e) => setCForm({ ...cForm, cantidad: e.target.value })} />
+              <button className="btn col-span-1" onClick={regCons}>+</button>
+            </div>
+            <table className="table">
+              <thead><tr><th>Producto</th><th>Lote</th><th>Cant</th><th>Costo</th><th>Facturado</th></tr></thead>
+              <tbody>
+                {consumosCir.lista.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.producto}</td>
+                    <td>{c.numero_lote ?? "-"}</td>
+                    <td>{c.cantidad}</td>
+                    <td>{Number(c.costo_unitario_snapshot).toFixed(4)}</td>
+                    <td>{c.consumo_id ? "Si" : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-xs text-slate-500">
+              Al marcar la cirugia como "realizada" los consumos se vuelcan automaticamente al episodio del paciente para facturacion.
+            </p>
+          </div>
+        </div>
+      )}
 
       {show && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">

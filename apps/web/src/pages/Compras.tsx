@@ -39,35 +39,61 @@ export default function Compras() {
     load();
   };
 
+  const [facturaFile, setFacturaFile] = useState<File | null>(null);
+
   const openRec = async (oc: OC) => {
-    const r = await api.get<{ orden: any; detalles: any[] }>(`/api/compras/ordenes/${oc.id}`);
+    const r = await api.get<{ data: any[] }>(`/api/compras/ordenes/${oc.id}/pendientes`);
     setRec({
       area_destino_id: "",
       n_factura_proveedor: "",
-      detalles: r.detalles.map((d: any) => ({
-        producto_id: d.producto_id,
-        producto_nombre: d.producto,
-        cantidad: d.cantidad,
-        costo_unitario: d.costo_unitario,
-        lote_numero: "",
-        fecha_vencimiento: "",
-        n_autorizacion_srs: "",
-      })),
+      detalles: r.data
+        .filter((d: any) => d.pendiente > 0)
+        .map((d: any) => ({
+          producto_id: d.producto_id,
+          producto_nombre: d.producto,
+          ordenado: d.ordenado,
+          recibido_previo: d.recibido,
+          pendiente: d.pendiente,
+          cantidad: d.pendiente,
+          costo_unitario: d.costo_unitario,
+          lote_numero: "",
+          fecha_vencimiento: "",
+          n_autorizacion_srs: "",
+        })),
     });
+    setFacturaFile(null);
     setShowRec(oc);
   };
 
   const submitRec = async () => {
     if (!showRec) return;
-    await api.post("/api/compras/recepciones", {
-      orden_compra_id: showRec.id,
-      fecha: new Date().toISOString().slice(0, 10),
-      n_factura_proveedor: rec.n_factura_proveedor || null,
-      area_destino_id: Number(rec.area_destino_id),
-      detalles: rec.detalles,
-    });
-    setShowRec(null);
-    load();
+    const detallesValidos = rec.detalles.filter((d: any) => Number(d.cantidad) > 0);
+    if (!detallesValidos.length) {
+      alert("No hay cantidades a recibir");
+      return;
+    }
+    try {
+      const resp = await api.post<{ id: number }>("/api/compras/recepciones", {
+        orden_compra_id: showRec.id,
+        fecha: new Date().toISOString().slice(0, 10),
+        n_factura_proveedor: rec.n_factura_proveedor || null,
+        area_destino_id: Number(rec.area_destino_id),
+        detalles: detallesValidos,
+      });
+      if (facturaFile) {
+        const fd = new FormData();
+        fd.append("file", facturaFile);
+        await fetch(`/api/compras/recepciones/${resp.id}/factura`, {
+          method: "POST",
+          body: fd,
+          credentials: "include",
+        });
+      }
+      setShowRec(null);
+      load();
+    } catch (e: any) {
+      alert(e.message);
+    }
   };
 
   return (
@@ -148,12 +174,16 @@ export default function Compras() {
               <input className="input" placeholder="No. factura proveedor" value={rec.n_factura_proveedor} onChange={(e) => setRec({ ...rec, n_factura_proveedor: e.target.value })} />
             </div>
             <table className="table">
-              <thead><tr><th>Producto</th><th>Cant</th><th>Costo</th><th>Lote</th><th>Vence</th><th>Aut. SRS</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Ord/Prev</th><th>Pend</th><th>Recibir</th><th>Costo</th><th>Lote</th><th>Vence</th><th>Aut. SRS</th></tr></thead>
               <tbody>
                 {rec.detalles.map((d: any, idx: number) => (
                   <tr key={idx}>
                     <td>{d.producto_nombre}</td>
-                    <td>{d.cantidad}</td>
+                    <td className="text-xs">{d.ordenado} / {d.recibido_previo}</td>
+                    <td>{d.pendiente}</td>
+                    <td><input className="input" type="number" max={d.pendiente} value={d.cantidad} onChange={(e) => {
+                      const ds = [...rec.detalles]; ds[idx].cantidad = e.target.value; setRec({ ...rec, detalles: ds });
+                    }} /></td>
                     <td>{Number(d.costo_unitario).toFixed(2)}</td>
                     <td><input className="input" value={d.lote_numero} onChange={(e) => {
                       const ds = [...rec.detalles]; ds[idx].lote_numero = e.target.value; setRec({ ...rec, detalles: ds });
@@ -168,7 +198,11 @@ export default function Compras() {
                 ))}
               </tbody>
             </table>
-            <p className="text-xs text-slate-500">Lote/vence requeridos para productos con categoria lote. No. autorizacion SRS opcional (registro fisico).</p>
+            <p className="text-xs text-slate-500">Lote/vence requeridos para productos con categoria lote. No. autorizacion SRS opcional (registro fisico). Puede recibir parcial editando "Recibir".</p>
+            <div>
+              <label className="text-xs">Factura del proveedor (PDF/imagen, max 10MB)</label>
+              <input className="input" type="file" accept="application/pdf,image/*" onChange={(e) => setFacturaFile(e.target.files?.[0] ?? null)} />
+            </div>
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setShowRec(null)}>Cancelar</button>
               <button className="btn" onClick={submitRec}>Confirmar recepcion</button>

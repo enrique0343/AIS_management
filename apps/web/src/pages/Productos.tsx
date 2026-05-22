@@ -25,7 +25,8 @@ export default function Productos() {
   const [cats, setCats] = useState<Cat[]>([]);
   const [unidades, setUnidades] = useState<Unidad[]>([]);
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState<any>({
+  const [editId, setEditId] = useState<number | null>(null);
+  const blankForm = {
     codigo: "",
     nombre: "",
     principio_activo: "",
@@ -36,7 +37,8 @@ export default function Productos() {
     requiere_receta_especial: false,
     precio_venta: 0,
     punto_reorden: 0,
-  });
+  };
+  const [form, setForm] = useState<any>(blankForm);
 
   const load = () =>
     api.get<{ data: Producto[] }>(`/api/productos${q ? `?q=${encodeURIComponent(q)}` : ""}`).then((r) =>
@@ -50,15 +52,41 @@ export default function Productos() {
   }, []);
 
   const submit = async () => {
-    await api.post("/api/productos", {
+    const payload = {
       ...form,
       categoria_id: Number(form.categoria_id),
       unidad_medida_id: Number(form.unidad_medida_id),
       precio_venta: Number(form.precio_venta),
       punto_reorden: Number(form.punto_reorden),
-    });
+    };
+    if (editId) {
+      await api.put(`/api/productos/${editId}`, payload);
+    } else {
+      await api.post("/api/productos", payload);
+    }
     setShow(false);
+    setEditId(null);
+    setForm(blankForm);
     load();
+  };
+
+  const editar = async (p: Producto) => {
+    const r = await api.get<{ producto: any }>(`/api/productos/${p.id}`);
+    const prod = r.producto;
+    setForm({
+      codigo: prod.codigo,
+      nombre: prod.nombre,
+      principio_activo: prod.principio_activo ?? "",
+      categoria_id: String(prod.categoria_id),
+      unidad_medida_id: String(prod.unidad_medida_id),
+      registro_sanitario: prod.registro_sanitario ?? "",
+      es_controlado: !!prod.es_controlado,
+      requiere_receta_especial: !!prod.requiere_receta_especial,
+      precio_venta: prod.precio_venta,
+      punto_reorden: prod.punto_reorden,
+    });
+    setEditId(p.id);
+    setShow(true);
   };
 
   return (
@@ -68,7 +96,7 @@ export default function Productos() {
         <div className="flex gap-2">
           <input className="input w-64" placeholder="Buscar..." value={q} onChange={(e) => setQ(e.target.value)} />
           <button className="btn-secondary" onClick={load}>Buscar</button>
-          <button className="btn" onClick={() => setShow(true)}>Nuevo</button>
+          <button className="btn" onClick={() => { setEditId(null); setForm(blankForm); setShow(true); }}>Nuevo</button>
         </div>
       </div>
       <div className="card overflow-auto">
@@ -76,7 +104,7 @@ export default function Productos() {
           <thead>
             <tr>
               <th>Codigo</th><th>Nombre</th><th>Categoria</th><th>Unidad</th>
-              <th>CPP</th><th>Precio</th><th>Stock</th><th>Reorden</th><th>Ctrl</th>
+              <th>CPP</th><th>Precio</th><th>Stock</th><th>Reorden</th><th>Ctrl</th><th></th>
             </tr>
           </thead>
           <tbody>
@@ -94,6 +122,7 @@ export default function Productos() {
                 <td>{p.existencia_total}</td>
                 <td>{p.punto_reorden}</td>
                 <td>{p.es_controlado ? "Si" : ""}</td>
+                <td><button className="btn-secondary text-xs" onClick={() => editar(p)}>Editar</button></td>
               </tr>
             ))}
           </tbody>
@@ -103,7 +132,7 @@ export default function Productos() {
       {show && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
           <div className="card w-full max-w-lg space-y-3">
-            <h2 className="font-semibold">Nuevo producto</h2>
+            <h2 className="font-semibold">{editId ? "Editar producto" : "Nuevo producto"}</h2>
             <input className="input" placeholder="Codigo" value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} />
             <input className="input" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
             <input className="input" placeholder="Principio activo" value={form.principio_activo} onChange={(e) => setForm({ ...form, principio_activo: e.target.value })} />
@@ -125,7 +154,7 @@ export default function Productos() {
               <input className="input" type="number" step="0.01" placeholder="Punto reorden" value={form.punto_reorden} onChange={(e) => setForm({ ...form, punto_reorden: e.target.value })} />
             </div>
             <div className="flex justify-end gap-2">
-              <button className="btn-secondary" onClick={() => setShow(false)}>Cancelar</button>
+              <button className="btn-secondary" onClick={() => { setShow(false); setEditId(null); }}>Cancelar</button>
               <button className="btn" onClick={submit}>Guardar</button>
             </div>
           </div>
