@@ -21,6 +21,7 @@ type Stats = {
   facturas_pendientes: number;
   monto_pendiente: number;
   ingresos_hoy: number;
+  episodios_por_facturar: number;
 };
 
 export default function Dashboard() {
@@ -60,6 +61,7 @@ export default function Dashboard() {
           <Stat label="Facturas pendientes" value={stats.facturas_pendientes} />
           <Stat label="Monto pendiente" value={`$${Number(stats.monto_pendiente).toFixed(2)}`} accent="text-red-600" />
           <Stat label="Ingresos hoy" value={`$${Number(stats.ingresos_hoy).toFixed(2)}`} accent="text-green-600" />
+          <Stat label="Por facturar" value={stats.episodios_por_facturar} accent={stats.episodios_por_facturar ? "text-amber-600" : ""} />
           <Stat label="Reorden" value={reorden.length} accent={reorden.length ? "text-red-600" : ""} />
         </div>
       )}

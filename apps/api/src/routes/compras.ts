@@ -348,4 +348,19 @@ app.get("/recepciones/:id/factura", async (c) => {
   });
 });
 
+// Cancelar OC (solo si no tiene recepciones)
+app.post("/ordenes/:id/cancelar", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const r = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM recepcion_compra WHERE orden_id = ?`
+  )
+    .bind(id)
+    .first<{ n: number }>();
+  if ((r?.n ?? 0) > 0) return c.json({ error: "tiene_recepciones_no_se_puede_cancelar" }, 400);
+  await c.env.DB.prepare(`UPDATE orden_compra SET estado = 'cancelada' WHERE id = ?`)
+    .bind(id)
+    .run();
+  return c.json({ ok: true });
+});
+
 export default app;

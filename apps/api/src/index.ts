@@ -41,6 +41,12 @@ app.get("/api/dashboard", async (c) => {
     c.env.DB.prepare(`SELECT COUNT(*) AS n FROM cirugia WHERE date(fecha_programada) >= date('now') AND estado IN ('programada','en_curso')`).first<{ n: number }>(),
     c.env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS t FROM factura WHERE estado = 'pendiente'`).first<{ n: number; t: number }>(),
     c.env.DB.prepare(`SELECT COALESCE(SUM(monto), 0) AS t FROM pago WHERE date(fecha) = date('now')`).first<{ t: number }>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM (
+         SELECT e.id FROM episodio_atencion e
+          WHERE EXISTS (SELECT 1 FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL)
+       )`
+    ).first<{ n: number }>(),
   ]);
   return c.json({
     productos: queries[0]?.n ?? 0,
@@ -50,6 +56,7 @@ app.get("/api/dashboard", async (c) => {
     facturas_pendientes: queries[4]?.n ?? 0,
     monto_pendiente: queries[4]?.t ?? 0,
     ingresos_hoy: queries[5]?.t ?? 0,
+    episodios_por_facturar: queries[6]?.n ?? 0,
   });
 });
 
