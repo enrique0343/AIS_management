@@ -26,6 +26,28 @@ app.get("/stock", async (c) => {
   return c.json({ data: results });
 });
 
+// Valorizacion de inventario (existencia x CPP) por area
+app.get("/valorizacion", async (c) => {
+  const areaId = c.req.query("area_id");
+  const sql = `
+    SELECT p.id AS producto_id, p.codigo, p.nombre, u.abreviatura AS unidad,
+           a.id AS area_id, a.nombre AS area,
+           SUM(e.cantidad) AS cantidad,
+           p.costo_promedio_ponderado AS cpp,
+           ROUND(SUM(e.cantidad) * p.costo_promedio_ponderado, 2) AS valor
+      FROM existencia e
+      JOIN producto p ON p.id = e.producto_id
+      JOIN unidad_medida u ON u.id = p.unidad_medida_id
+      JOIN area a ON a.id = e.area_id
+     WHERE e.cantidad > 0 ${areaId ? "AND e.area_id = ?" : ""}
+     GROUP BY p.id, a.id
+     ORDER BY a.nombre, p.nombre`;
+  const stmt = areaId ? c.env.DB.prepare(sql).bind(parseInt(areaId, 10)) : c.env.DB.prepare(sql);
+  const { results } = await stmt.all<{ cantidad: number; valor: number; area: string }>();
+  const total = (results ?? []).reduce((s, r) => s + Number(r.valor), 0);
+  return c.json({ data: results, total: Math.round(total * 100) / 100 });
+});
+
 // Movimientos
 app.get("/movimientos", async (c) => {
   const productoId = c.req.query("producto_id");
