@@ -10,6 +10,9 @@ const menu = [
   { to: "/enfermeria", label: "Enfermeria", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
   { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"] },
   { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"] },
+  { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"] },
+  { to: "/profesionales", label: "Profesionales", roles: ["admin"] },
+  { to: "/usuarios", label: "Usuarios", roles: ["admin"] },
 ];
 
 export default function Layout() {
