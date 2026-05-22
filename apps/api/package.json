@@ -1,0 +1,27 @@
+{
+  "name": "@ais/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "db:migrate:local": "wrangler d1 migrations apply ais_management --local",
+    "db:migrate:remote": "wrangler d1 migrations apply ais_management --remote",
+    "db:seed:local": "wrangler d1 execute ais_management --local --file=./migrations/seed.sql",
+    "db:seed:remote": "wrangler d1 execute ais_management --remote --file=./migrations/seed.sql"
+  },
+  "dependencies": {
+    "hono": "^4.6.3",
+    "zod": "^3.23.8",
+    "hash-wasm": "^4.11.0",
+    "@ais/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240925.0",
+    "typescript": "^5.5.4",
+    "wrangler": "^3.78.0"
+  }
+}

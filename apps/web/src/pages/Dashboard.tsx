@@ -1,0 +1,87 @@
+import { useEffect, useState } from "react";
+import { api } from "../lib/api";
+import { Link } from "react-router-dom";
+
+type ReordenRow = { id: number; codigo: string; nombre: string; punto_reorden: number; existencia_total: number };
+type VencimientoRow = {
+  lote_id: number;
+  numero_lote: string;
+  fecha_vencimiento: string;
+  producto_id: number;
+  codigo: string;
+  nombre: string;
+  cantidad: number;
+};
+
+export default function Dashboard() {
+  const [reorden, setReorden] = useState<ReordenRow[]>([]);
+  const [vencen, setVencen] = useState<VencimientoRow[]>([]);
+
+  useEffect(() => {
+    api
+      .get<{ data: ReordenRow[] }>("/api/productos/_alertas/reorden")
+      .then((r) => setReorden(r.data))
+      .catch(() => {});
+    api
+      .get<{ data: VencimientoRow[] }>("/api/productos/_alertas/vencimiento?dias=90")
+      .then((r) => setVencen(r.data))
+      .catch(() => {});
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold">Panel</h1>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <section className="card">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="font-semibold">Productos bajo reorden ({reorden.length})</h2>
+            <Link to="/compras" className="text-sm text-blue-600 hover:underline">Crear OC</Link>
+          </div>
+          {!reorden.length ? (
+            <div className="text-sm text-slate-500">Sin alertas</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr><th>Codigo</th><th>Nombre</th><th>Existencia</th><th>Reorden</th></tr>
+              </thead>
+              <tbody>
+                {reorden.map((p) => (
+                  <tr key={p.id}>
+                    <td>{p.codigo}</td>
+                    <td>{p.nombre}</td>
+                    <td>{p.existencia_total}</td>
+                    <td>{p.punto_reorden}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+
+        <section className="card">
+          <h2 className="font-semibold mb-2">Proximos a vencer (90 dias)</h2>
+          {!vencen.length ? (
+            <div className="text-sm text-slate-500">Sin alertas</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr><th>Producto</th><th>Lote</th><th>Vence</th><th>Cant</th></tr>
+              </thead>
+              <tbody>
+                {vencen.map((v) => (
+                  <tr key={v.lote_id}>
+                    <td>{v.nombre}</td>
+                    <td>{v.numero_lote}</td>
+                    <td>{v.fecha_vencimiento}</td>
+                    <td>{v.cantidad}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </section>
+      </div>
+    </div>
+  );
+}
