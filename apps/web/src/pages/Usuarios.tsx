@@ -5,7 +5,9 @@ type User = { id: number; email: string; nombre: string; activo: number; creado_
 type Rol = { id: number; codigo: string; nombre: string };
 
 export default function Usuarios() {
+  const [tab, setTab] = useState<"usuarios" | "auditoria">("usuarios");
   const [items, setItems] = useState<User[]>([]);
+  const [audit, setAudit] = useState<any[]>([]);
   const [roles, setRoles] = useState<Rol[]>([]);
   const [show, setShow] = useState(false);
   const [form, setForm] = useState<{ email: string; password: string; nombre: string; roles: string[] }>({
@@ -16,10 +18,14 @@ export default function Usuarios() {
   });
 
   const load = () => api.get<{ data: User[] }>("/api/usuarios").then((r) => setItems(r.data));
+  const loadAudit = () => api.get<{ data: any[] }>("/api/usuarios/auditoria").then((r) => setAudit(r.data));
   useEffect(() => {
     load();
     api.get<{ data: Rol[] }>("/api/usuarios/roles").then((r) => setRoles(r.data));
   }, []);
+  useEffect(() => {
+    if (tab === "auditoria") loadAudit();
+  }, [tab]);
 
   const submit = async () => {
     if (!form.email || form.password.length < 8 || !form.nombre) {
@@ -53,8 +59,33 @@ export default function Usuarios() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Usuarios</h1>
-        <button className="btn" onClick={() => setShow(true)}>Nuevo</button>
+        {tab === "usuarios" && <button className="btn" onClick={() => setShow(true)}>Nuevo</button>}
       </div>
+      <div className="flex gap-2 border-b">
+        {(["usuarios", "auditoria"] as const).map((t) => (
+          <button key={t} onClick={() => setTab(t)} className={`px-3 py-2 text-sm border-b-2 ${tab === t ? "border-blue-600 text-blue-600 font-medium" : "border-transparent text-slate-600"}`}>{t}</button>
+        ))}
+      </div>
+      {tab === "auditoria" && (
+        <div className="card overflow-auto">
+          <table className="table">
+            <thead><tr><th>Fecha</th><th>Usuario</th><th>Accion</th><th>Entidad</th><th>ID</th><th>IP</th></tr></thead>
+            <tbody>
+              {audit.map((a) => (
+                <tr key={a.id}>
+                  <td className="text-xs">{a.fecha}</td>
+                  <td>{a.usuario ?? "-"}</td>
+                  <td><span className="text-xs px-1 rounded bg-slate-100">{a.accion}</span></td>
+                  <td>{a.entidad}</td>
+                  <td>{a.entidad_id ?? "-"}</td>
+                  <td className="text-xs">{a.ip ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {tab === "usuarios" && (
       <div className="card overflow-auto">
         <table className="table">
           <thead><tr><th>Email</th><th>Nombre</th><th>Roles</th><th>Activo</th><th></th></tr></thead>
@@ -74,6 +105,7 @@ export default function Usuarios() {
           </tbody>
         </table>
       </div>
+      )}
 
       {show && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">

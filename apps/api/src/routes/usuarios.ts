@@ -75,6 +75,29 @@ app.post("/:id/desactivar", async (c) => {
   return c.json({ ok: true });
 });
 
+app.get("/auditoria", async (c) => {
+  const desde = c.req.query("desde");
+  const hasta = c.req.query("hasta");
+  const accion = c.req.query("accion");
+  const filt: string[] = ["1=1"];
+  const binds: unknown[] = [];
+  if (desde) { filt.push("date(a.fecha) >= ?"); binds.push(desde); }
+  if (hasta) { filt.push("date(a.fecha) <= ?"); binds.push(hasta); }
+  if (accion) { filt.push("a.accion = ?"); binds.push(accion); }
+  const { results } = await c.env.DB.prepare(
+    `SELECT a.id, a.fecha, a.accion, a.entidad, a.entidad_id, a.payload, a.ip,
+            u.email AS usuario
+       FROM audit_log a
+       LEFT JOIN usuario u ON u.id = a.usuario_id
+      WHERE ${filt.join(" AND ")}
+      ORDER BY a.fecha DESC
+      LIMIT 500`
+  )
+    .bind(...binds)
+    .all();
+  return c.json({ data: results });
+});
+
 app.get("/roles", async (c) => {
   const { results } = await c.env.DB.prepare(`SELECT id, codigo, nombre FROM rol ORDER BY nombre`).all();
   return c.json({ data: results });

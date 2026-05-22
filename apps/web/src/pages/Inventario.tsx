@@ -17,8 +17,55 @@ type Stock = {
 type Area = { id: number; nombre: string };
 type Val = { producto_id: number; codigo: string; nombre: string; unidad: string; area: string; cantidad: number; cpp: number; valor: number };
 
+type Op = "transferencia" | "descarte" | "ajuste";
+
 export default function Inventario() {
   const [tab, setTab] = useState<"stock" | "valorizacion" | "movimientos">("stock");
+  const [op, setOp] = useState<Op | null>(null);
+  const [opForm, setOpForm] = useState<any>({});
+  const [prods, setProds] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.get<{ data: any[] }>("/api/productos").then((r) => setProds(r.data));
+  }, []);
+
+  const submitOp = async () => {
+    try {
+      if (op === "transferencia") {
+        await api.post("/api/inventario/transferencias", {
+          producto_id: Number(opForm.producto_id),
+          area_origen_id: Number(opForm.area_origen_id),
+          area_destino_id: Number(opForm.area_destino_id),
+          cantidad: Number(opForm.cantidad),
+          observaciones: opForm.observaciones || null,
+        });
+      } else if (op === "descarte") {
+        await api.post("/api/inventario/descartes", {
+          producto_id: Number(opForm.producto_id),
+          area_id: Number(opForm.area_id),
+          cantidad: Number(opForm.cantidad),
+          motivo: opForm.motivo,
+          observaciones: opForm.observaciones || null,
+        });
+      } else if (op === "ajuste") {
+        await api.post("/api/inventario/ajustes", {
+          producto_id: Number(opForm.producto_id),
+          area_id: Number(opForm.area_id),
+          cantidad: Number(opForm.cantidad),
+          observaciones: opForm.observaciones,
+        });
+      }
+      setOp(null);
+      setOpForm({});
+      // recargar tab activo
+      if (tab === "stock") {
+        const url = "/api/inventario/stock";
+        api.get<{ data: Stock[] }>(url).then((r) => setStock(r.data));
+      }
+    } catch (e: any) {
+      alert(e.message);
+    }
+  };
   const [stock, setStock] = useState<Stock[]>([]);
   const [val, setVal] = useState<{ data: Val[]; total: number }>({ data: [], total: 0 });
   const [movs, setMovs] = useState<any[]>([]);
@@ -45,13 +92,62 @@ export default function Inventario() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h1 className="text-2xl font-semibold">Inventario</h1>
-        {(tab === "stock" || tab === "valorizacion") && (
-          <select className="input w-64" value={areaId} onChange={(e) => setAreaId(e.target.value)}>
-            <option value="">Todas las areas</option>
-            {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-          </select>
-        )}
+        <div className="flex gap-2 items-center">
+          {(tab === "stock" || tab === "valorizacion") && (
+            <select className="input w-48" value={areaId} onChange={(e) => setAreaId(e.target.value)}>
+              <option value="">Todas las areas</option>
+              {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+            </select>
+          )}
+          <button className="btn-secondary text-sm" onClick={() => { setOp("transferencia"); setOpForm({}); }}>Transferir</button>
+          <button className="btn-secondary text-sm" onClick={() => { setOp("descarte"); setOpForm({ motivo: "vencido" }); }}>Descarte</button>
+          <button className="btn-secondary text-sm" onClick={() => { setOp("ajuste"); setOpForm({}); }}>Ajuste</button>
+        </div>
       </div>
+
+      {op && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+          <div className="card w-full max-w-md space-y-3">
+            <h2 className="font-semibold capitalize">{op}</h2>
+            <select className="input" value={opForm.producto_id ?? ""} onChange={(e) => setOpForm({ ...opForm, producto_id: e.target.value })}>
+              <option value="">-- Producto --</option>
+              {prods.map((p) => <option key={p.id} value={p.id}>{p.codigo} - {p.nombre}</option>)}
+            </select>
+            {op === "transferencia" ? (
+              <>
+                <select className="input" value={opForm.area_origen_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_origen_id: e.target.value })}>
+                  <option value="">-- Area origen --</option>
+                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                </select>
+                <select className="input" value={opForm.area_destino_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_destino_id: e.target.value })}>
+                  <option value="">-- Area destino --</option>
+                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                </select>
+              </>
+            ) : (
+              <select className="input" value={opForm.area_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_id: e.target.value })}>
+                <option value="">-- Area --</option>
+                {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+              </select>
+            )}
+            <input className="input" type="number" step="0.01" placeholder={op === "ajuste" ? "Cantidad (+/-)" : "Cantidad"} value={opForm.cantidad ?? ""} onChange={(e) => setOpForm({ ...opForm, cantidad: e.target.value })} />
+            {op === "descarte" && (
+              <select className="input" value={opForm.motivo ?? "vencido"} onChange={(e) => setOpForm({ ...opForm, motivo: e.target.value })}>
+                <option value="vencido">Vencido</option>
+                <option value="deteriorado">Deteriorado</option>
+                <option value="defuncion">Defuncion</option>
+                <option value="sobrante">Sobrante</option>
+                <option value="otro">Otro</option>
+              </select>
+            )}
+            <textarea className="input" placeholder={op === "ajuste" ? "Justificacion (obligatoria)" : "Observaciones"} value={opForm.observaciones ?? ""} onChange={(e) => setOpForm({ ...opForm, observaciones: e.target.value })} />
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setOp(null)}>Cancelar</button>
+              <button className="btn" onClick={submitOp}>Confirmar</button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="flex gap-2 border-b">
         {(["stock", "valorizacion", "movimientos"] as const).map((t) => (
           <button
