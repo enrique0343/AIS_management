@@ -20,6 +20,13 @@ type AltaPend = {
   devoluciones_pendientes: number;
   requisiciones_activas: number;
 };
+type ConsumoPend = {
+  id: number; producto_id: number; producto: string; codigo: string;
+  cantidad: number; precio_venta_snapshot: number;
+  lote_id: number | null; lote_numero: string | null; lote_vencimiento: string | null;
+  requiere_lote_vencimiento: number; es_servicio: number; area_id: number;
+};
+type LoteDisp = { id: number; numero_lote: string; fecha_vencimiento: string; stock_total: number };
 
 type CargoExtra = { desc: string; cant: number; precio: number };
 type CierreModal = { ep: AltaPend; ivaPct: number; cargosExtra: CargoExtra[] };
@@ -35,6 +42,15 @@ export default function Facturacion() {
   const [reporte, setReporte] = useState<any[]>([]);
   const [repDesde, setRepDesde] = useState(() => new Date().toISOString().slice(0, 10));
   const [repHasta, setRepHasta] = useState(() => new Date().toISOString().slice(0, 10));
+
+  // Edicion de cargos en cola de alta
+  const [consumosPorEp, setConsumosPorEp] = useState<Record<number, ConsumoPend[]>>({});
+  const [editInline, setEditInline] = useState<{ consumoId: number; cantidad: string; precio: string } | null>(null);
+  const [editLoteModal, setEditLoteModal] = useState<{
+    consumo: ConsumoPend; epId: number;
+    cantidad: string; lotes: LoteDisp[];
+    loteId: number | null; justificacion: string;
+  } | null>(null);
 
   const loadCola = () =>
     api.get<{ data: AltaPend[] }>("/api/facturacion/pendientes-alta").then((r) => setAltaPend(r.data)).catch(() => {});
@@ -132,6 +148,79 @@ export default function Facturacion() {
     setCierreModal({ ...cierreModal, cargosExtra: updated });
   };
 
+  // === Edicion de cargos ===
+  const toggleConsumos = async (epId: number) => {
+    if (consumosPorEp[epId] !== undefined) {
+      setConsumosPorEp((prev) => { const n = { ...prev }; delete n[epId]; return n; });
+      setEditInline(null);
+    } else {
+      try {
+        const r = await api.get<{ data: ConsumoPend[] }>(`/api/facturacion/episodios/${epId}/consumos-pendientes`);
+        setConsumosPorEp((prev) => ({ ...prev, [epId]: r.data }));
+      } catch {
+        alert("Error al cargar consumos");
+      }
+    }
+  };
+
+  const recargarConsumos = async (epId: number) => {
+    const r = await api.get<{ data: ConsumoPend[] }>(`/api/facturacion/episodios/${epId}/consumos-pendientes`);
+    setConsumosPorEp((prev) => ({ ...prev, [epId]: r.data }));
+  };
+
+  const guardarEdicionSimple = async (c: ConsumoPend, epId: number) => {
+    if (!editInline || editInline.consumoId !== c.id) return;
+    try {
+      await api.put(`/api/facturacion/consumos/${c.id}`, {
+        nueva_cantidad: Number(editInline.cantidad),
+        nuevo_precio: Number(editInline.precio),
+      });
+      setEditInline(null);
+      await recargarConsumos(epId);
+      loadCola();
+    } catch (e: any) {
+      alert(e.message ?? "Error al guardar");
+    }
+  };
+
+  const abrirEditarLote = async (consumo: ConsumoPend, epId: number) => {
+    try {
+      const r = await api.get<{ data: LoteDisp[]; lote_actual_id: number | null }>(
+        `/api/facturacion/consumos/${consumo.id}/lotes-producto`
+      );
+      setEditLoteModal({
+        consumo, epId,
+        cantidad: String(consumo.cantidad),
+        lotes: r.data,
+        loteId: r.lote_actual_id,
+        justificacion: "",
+      });
+    } catch {
+      alert("Error al cargar lotes");
+    }
+  };
+
+  const confirmarEditarLote = async () => {
+    if (!editLoteModal) return;
+    if (editLoteModal.justificacion.trim().length < 15) {
+      alert("La justificacion debe tener al menos 15 caracteres");
+      return;
+    }
+    try {
+      await api.put(`/api/facturacion/consumos/${editLoteModal.consumo.id}`, {
+        nueva_cantidad: Number(editLoteModal.cantidad),
+        ajuste_lote_id: editLoteModal.loteId,
+        justificacion: editLoteModal.justificacion,
+      });
+      const epId = editLoteModal.epId;
+      setEditLoteModal(null);
+      await recargarConsumos(epId);
+      loadCola();
+    } catch (e: any) {
+      alert(e.message ?? "Error al guardar");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Facturacion</h1>
@@ -169,6 +258,7 @@ export default function Facturacion() {
           {altaPend.map((ep) => {
             const bloqueado = ep.devoluciones_pendientes > 0 || ep.requisiciones_activas > 0;
             const total = Number(ep.cargos_consumos) + Number(ep.cargos_habitacion);
+            const consumosAbiertos = consumosPorEp[ep.episodio_id];
             return (
               <div
                 key={ep.episodio_id}
@@ -207,6 +297,116 @@ export default function Facturacion() {
                       Habitacion est.: ${Number(ep.cargos_habitacion).toFixed(2)}
                     </div>
                   </div>
+                </div>
+
+                {/* Edicion de consumos */}
+                <div className="mt-2 border-t pt-2">
+                  <button
+                    className="text-xs text-blue-600 hover:underline"
+                    onClick={() => toggleConsumos(ep.episodio_id)}
+                  >
+                    {consumosAbiertos !== undefined ? "Ocultar cargos" : "Ver / Editar cargos"}
+                  </button>
+
+                  {consumosAbiertos !== undefined && (
+                    <div className="mt-2 space-y-1">
+                      {!consumosAbiertos.length && (
+                        <div className="text-xs text-slate-400">Sin consumos pendientes</div>
+                      )}
+                      {consumosAbiertos.map((c) => {
+                        const editando = editInline?.consumoId === c.id;
+                        const esLote = c.requiere_lote_vencimiento === 1;
+                        return (
+                          <div
+                            key={c.id}
+                            className="flex items-start gap-2 text-xs bg-slate-50 rounded p-2"
+                          >
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium truncate">{c.producto}</div>
+                              <div className="text-slate-400">{c.codigo}</div>
+                              {c.lote_numero && (
+                                <div className="text-slate-400">
+                                  Lote: {c.lote_numero} — Vence: {c.lote_vencimiento}
+                                </div>
+                              )}
+                            </div>
+
+                            {esLote ? (
+                              /* Productos con lote: abrir modal */
+                              <div className="shrink-0 text-right">
+                                <div className="text-slate-600">
+                                  {c.cantidad} × ${Number(c.precio_venta_snapshot).toFixed(2)}
+                                </div>
+                                <button
+                                  className="text-blue-600 hover:underline mt-0.5"
+                                  onClick={() => abrirEditarLote(c, ep.episodio_id)}
+                                >
+                                  Editar
+                                </button>
+                              </div>
+                            ) : editando ? (
+                              /* Edicion inline para no-lote */
+                              <div className="shrink-0 flex flex-col gap-1 items-end">
+                                <div className="flex gap-1">
+                                  <input
+                                    className="input w-16 text-xs text-center"
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    value={editInline.cantidad}
+                                    onChange={(e) => setEditInline({ ...editInline, cantidad: e.target.value })}
+                                    placeholder="Cant"
+                                  />
+                                  <input
+                                    className="input w-20 text-xs"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={editInline.precio}
+                                    onChange={(e) => setEditInline({ ...editInline, precio: e.target.value })}
+                                    placeholder="Precio"
+                                  />
+                                </div>
+                                <div className="flex gap-1">
+                                  <button
+                                    className="btn text-xs py-0.5 px-2"
+                                    onClick={() => guardarEdicionSimple(c, ep.episodio_id)}
+                                  >
+                                    Guardar
+                                  </button>
+                                  <button
+                                    className="btn-secondary text-xs py-0.5 px-2"
+                                    onClick={() => setEditInline(null)}
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              /* Vista normal no-lote */
+                              <div className="shrink-0 text-right">
+                                <div className="text-slate-600">
+                                  {c.cantidad} × ${Number(c.precio_venta_snapshot).toFixed(2)}
+                                </div>
+                                <button
+                                  className="text-blue-600 hover:underline mt-0.5"
+                                  onClick={() =>
+                                    setEditInline({
+                                      consumoId: c.id,
+                                      cantidad: String(c.cantidad),
+                                      precio: String(c.precio_venta_snapshot),
+                                    })
+                                  }
+                                >
+                                  Editar
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
 
                 {bloqueado && (
@@ -446,6 +646,103 @@ export default function Facturacion() {
               </p>
               <button className="btn shrink-0" onClick={confirmarCierre}>
                 Confirmar y facturar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal edicion de consumo con lote */}
+      {editLoteModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-md space-y-4">
+            <div className="flex justify-between items-start">
+              <h2 className="font-semibold">Editar cargo con lote</h2>
+              <button className="btn-secondary" onClick={() => setEditLoteModal(null)}>
+                Cancelar
+              </button>
+            </div>
+
+            <div className="p-3 bg-amber-50 border border-amber-300 rounded text-xs text-amber-800 space-y-1">
+              <div className="font-semibold">Advertencia</div>
+              <div>
+                Esta modificacion contraviene las buenas practicas si no cuenta con el producto
+                fisico a ajustar. La operacion tambien afecta el inventario.
+              </div>
+            </div>
+
+            <div className="text-sm">
+              <div className="font-medium">{editLoteModal.consumo.producto}</div>
+              <div className="text-slate-500 text-xs">{editLoteModal.consumo.codigo}</div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Lote para el ajuste</label>
+              <select
+                className="input"
+                value={editLoteModal.loteId ?? ""}
+                onChange={(e) => setEditLoteModal({ ...editLoteModal, loteId: Number(e.target.value) || null })}
+              >
+                <option value="">— Seleccionar lote —</option>
+                {editLoteModal.lotes.map((l) => (
+                  <option key={l.id} value={l.id}>
+                    {l.numero_lote} — Vence: {l.fecha_vencimiento} (stock: {Number(l.stock_total).toFixed(2)})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">
+                Nueva cantidad{" "}
+                <span className="text-slate-400">(actual: {editLoteModal.consumo.cantidad})</span>
+              </label>
+              <input
+                className="input"
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={editLoteModal.cantidad}
+                onChange={(e) => setEditLoteModal({ ...editLoteModal, cantidad: e.target.value })}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">
+                Justificacion{" "}
+                <span
+                  className={
+                    editLoteModal.justificacion.trim().length >= 15
+                      ? "text-green-600"
+                      : "text-red-500"
+                  }
+                >
+                  ({editLoteModal.justificacion.trim().length}/15 min)
+                </span>
+              </label>
+              <textarea
+                className="input min-h-[70px]"
+                placeholder="Describa el motivo del ajuste..."
+                value={editLoteModal.justificacion}
+                onChange={(e) => setEditLoteModal({ ...editLoteModal, justificacion: e.target.value })}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setEditLoteModal(null)}>
+                Cancelar
+              </button>
+              <button
+                className="btn"
+                disabled={
+                  !editLoteModal.loteId ||
+                  editLoteModal.justificacion.trim().length < 15 ||
+                  !Number(editLoteModal.cantidad) ||
+                  Number(editLoteModal.cantidad) <= 0
+                }
+                onClick={confirmarEditarLote}
+              >
+                Guardar ajuste
               </button>
             </div>
           </div>

@@ -403,6 +403,120 @@ app.post(
   }
 );
 
+// Lista de consumos no facturados de un episodio (para edicion en cola de alta)
+app.get("/episodios/:id/consumos-pendientes", requireRole("admin", "facturacion"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const { results } = await c.env.DB.prepare(
+    `SELECT cp.id, cp.producto_id, cp.cantidad, cp.precio_venta_snapshot,
+            cp.lote_id, cp.area_id,
+            p.nombre AS producto, p.codigo,
+            l.numero_lote, l.fecha_vencimiento AS lote_vencimiento,
+            cat.requiere_lote_vencimiento, cat.es_servicio
+       FROM consumo_paciente cp
+       JOIN producto p ON p.id = cp.producto_id
+       JOIN categoria_producto cat ON cat.id = p.categoria_id
+       LEFT JOIN lote l ON l.id = cp.lote_id
+      WHERE cp.episodio_id = ? AND cp.factura_detalle_id IS NULL
+      ORDER BY cp.fecha ASC`
+  ).bind(id).all();
+  return c.json({ data: results });
+});
+
+// Lotes del producto de un consumo (para selector al editar)
+app.get("/consumos/:id/lotes-producto", requireRole("admin", "facturacion"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const cp = await c.env.DB.prepare(
+    `SELECT producto_id, lote_id FROM consumo_paciente WHERE id = ?`
+  ).bind(id).first<{ producto_id: number; lote_id: number | null }>();
+  if (!cp) return c.json({ error: "no_encontrado" }, 404);
+  const { results } = await c.env.DB.prepare(
+    `SELECT l.id, l.numero_lote, l.fecha_vencimiento,
+            ROUND(COALESCE(SUM(e.cantidad), 0), 4) AS stock_total
+       FROM lote l
+       LEFT JOIN existencia e ON e.lote_id = l.id
+      WHERE l.producto_id = ?
+      GROUP BY l.id
+      ORDER BY l.fecha_vencimiento ASC`
+  ).bind(cp.producto_id).all();
+  return c.json({ data: results, lote_actual_id: cp.lote_id });
+});
+
+// Editar cantidad y/o precio de un consumo pendiente de facturar
+app.put("/consumos/:id", requireRole("admin", "facturacion"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const body = await c.req.json().catch(() => ({}));
+
+  const cp = await c.env.DB.prepare(
+    `SELECT cp.id, cp.cantidad, cp.precio_venta_snapshot, cp.lote_id, cp.area_id,
+            cp.factura_detalle_id, cp.episodio_id, cp.producto_id, cp.costo_unitario_snapshot,
+            cat.requiere_lote_vencimiento
+       FROM consumo_paciente cp
+       JOIN producto p ON p.id = cp.producto_id
+       JOIN categoria_producto cat ON cat.id = p.categoria_id
+      WHERE cp.id = ?`
+  ).bind(id).first<{
+    id: number; cantidad: number; precio_venta_snapshot: number;
+    lote_id: number | null; area_id: number; factura_detalle_id: number | null;
+    episodio_id: number; producto_id: number; costo_unitario_snapshot: number;
+    requiere_lote_vencimiento: number;
+  }>();
+  if (!cp) return c.json({ error: "no_encontrado" }, 404);
+  if (cp.factura_detalle_id) return c.json({ error: "ya_facturado" }, 400);
+
+  const nuevaCantidad = Number(body.nueva_cantidad);
+  if (!nuevaCantidad || nuevaCantidad <= 0) return c.json({ error: "cantidad_invalida" }, 400);
+
+  if (cp.requiere_lote_vencimiento) {
+    const justificacion = String(body.justificacion ?? "").trim();
+    if (justificacion.length < 15)
+      return c.json({ error: "La justificacion debe tener al menos 15 caracteres" }, 400);
+    const ajusteLoteId = body.ajuste_lote_id ? Number(body.ajuste_lote_id) : cp.lote_id;
+    if (!ajusteLoteId) return c.json({ error: "lote_requerido" }, 400);
+
+    const delta = nuevaCantidad - cp.cantidad;
+    if (delta !== 0) {
+      await c.env.DB.prepare(
+        `INSERT OR IGNORE INTO existencia (producto_id, area_id, lote_id, cantidad) VALUES (?, ?, ?, 0)`
+      ).bind(cp.producto_id, cp.area_id, ajusteLoteId).run();
+      // -delta: si delta<0 (reducimos), devolvemos stock (+); si delta>0 (aumentamos), sacamos stock (-)
+      await c.env.DB.prepare(
+        `UPDATE existencia SET cantidad = cantidad + ? WHERE producto_id = ? AND area_id = ? AND lote_id = ?`
+      ).bind(-delta, cp.producto_id, cp.area_id, ajusteLoteId).run();
+      await c.env.DB.prepare(
+        `INSERT INTO movimiento_inventario
+           (tipo, producto_id, lote_id, area_origen_id, area_destino_id,
+            cantidad, costo_unitario, usuario_id, referencia_tipo, referencia_id, observaciones)
+         VALUES ('ajuste', ?, ?, ?, ?, ?, ?, ?, 'consumo', ?, ?)`
+      ).bind(
+        cp.producto_id, ajusteLoteId,
+        delta > 0 ? cp.area_id : null,
+        delta < 0 ? cp.area_id : null,
+        Math.abs(delta), cp.costo_unitario_snapshot,
+        c.get("session")!.usuario_id, id,
+        `Ajuste facturacion: ${justificacion}`
+      ).run();
+    }
+  }
+
+  const nuevoPrecio = body.nuevo_precio !== undefined ? Number(body.nuevo_precio) : cp.precio_venta_snapshot;
+  await c.env.DB.prepare(
+    `UPDATE consumo_paciente SET cantidad = ?, precio_venta_snapshot = ? WHERE id = ?`
+  ).bind(nuevaCantidad, nuevoPrecio, id).run();
+
+  await logAudit(c.env, {
+    usuario_id: c.get("session")!.usuario_id,
+    accion: "editar_consumo_facturacion",
+    entidad: "consumo_paciente",
+    entidad_id: id,
+    payload: {
+      cantidad_anterior: cp.cantidad, nueva_cantidad: nuevaCantidad,
+      precio_anterior: cp.precio_venta_snapshot, nuevo_precio: nuevoPrecio,
+    },
+    ip: c.get("ip"),
+  });
+  return c.json({ ok: true });
+});
+
 // Reporte de ingresos
 app.get("/reporte-ingresos", async (c) => {
   const desde = c.req.query("desde") ?? new Date().toISOString().slice(0, 10);
