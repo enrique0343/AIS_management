@@ -58,11 +58,49 @@ app.get("/:id", async (c) => {
   return c.json({ producto: p, lotes: lotes.results, existencias: existencias.results });
 });
 
+// Sugiere el siguiente codigo para una categoria: PREFIJO-####
+app.get("/_siguiente-codigo", async (c) => {
+  const catId = parseInt(c.req.query("categoria_id") ?? "0", 10);
+  if (!catId) return c.json({ error: "categoria_id_requerida" }, 400);
+  const cat = await c.env.DB.prepare(`SELECT prefijo FROM categoria_producto WHERE id = ?`)
+    .bind(catId)
+    .first<{ prefijo: string }>();
+  if (!cat?.prefijo) return c.json({ error: "categoria_sin_prefijo" }, 400);
+  const max = await c.env.DB.prepare(
+    `SELECT codigo FROM producto WHERE codigo LIKE ? ORDER BY codigo DESC LIMIT 1`
+  )
+    .bind(`${cat.prefijo}-%`)
+    .first<{ codigo: string }>();
+  let next = 1;
+  if (max?.codigo) {
+    const m = max.codigo.match(/-(\d+)$/);
+    if (m) next = parseInt(m[1], 10) + 1;
+  }
+  return c.json({
+    prefijo: cat.prefijo,
+    siguiente: `${cat.prefijo}-${String(next).padStart(4, "0")}`,
+  });
+});
+
 app.post("/", requireRole("admin", "jefe_farmacia_central", "farmaceutico"), async (c) => {
   const body = await c.req.json().catch(() => null);
   const parsed = ProductoInput.safeParse(body);
   if (!parsed.success) return c.json({ error: "datos_invalidos", detalle: parsed.error.flatten() }, 400);
   const d = parsed.data;
+
+  // Validar que el codigo coincida con el prefijo de la categoria
+  const cat = await c.env.DB.prepare(`SELECT prefijo FROM categoria_producto WHERE id = ?`)
+    .bind(d.categoria_id)
+    .first<{ prefijo: string }>();
+  if (!cat) return c.json({ error: "categoria_no_encontrada" }, 400);
+  if (cat.prefijo && !d.codigo.toUpperCase().startsWith(`${cat.prefijo}-`)) {
+    return c.json({
+      error: "codigo_no_coincide_con_categoria",
+      esperado: `${cat.prefijo}-####`,
+      recibido: d.codigo,
+    }, 400);
+  }
+
   const r = await c.env.DB.prepare(
     `INSERT INTO producto (codigo, nombre, principio_activo, categoria_id, unidad_medida_id,
        laboratorio_id, registro_sanitario, es_controlado, requiere_receta_especial,
@@ -104,6 +142,27 @@ app.put("/:id", requireRole("admin", "jefe_farmacia_central", "farmaceutico"), a
   const body = await c.req.json().catch(() => null);
   const parsed = ProductoInput.partial().safeParse(body);
   if (!parsed.success) return c.json({ error: "datos_invalidos" }, 400);
+
+  // Si cambia codigo o categoria, revalidar prefijo
+  if (parsed.data.codigo !== undefined || parsed.data.categoria_id !== undefined) {
+    const actual = await c.env.DB.prepare(`SELECT codigo, categoria_id FROM producto WHERE id = ?`)
+      .bind(id)
+      .first<{ codigo: string; categoria_id: number }>();
+    if (!actual) return c.json({ error: "no_encontrado" }, 404);
+    const nuevoCodigo = parsed.data.codigo ?? actual.codigo;
+    const nuevaCatId = parsed.data.categoria_id ?? actual.categoria_id;
+    const cat = await c.env.DB.prepare(`SELECT prefijo FROM categoria_producto WHERE id = ?`)
+      .bind(nuevaCatId)
+      .first<{ prefijo: string }>();
+    if (cat?.prefijo && !nuevoCodigo.toUpperCase().startsWith(`${cat.prefijo}-`)) {
+      return c.json({
+        error: "codigo_no_coincide_con_categoria",
+        esperado: `${cat.prefijo}-####`,
+        recibido: nuevoCodigo,
+      }, 400);
+    }
+  }
+
   const fields: string[] = [];
   const binds: unknown[] = [];
   for (const [k, v] of Object.entries(parsed.data)) {

@@ -27,13 +27,13 @@ INSERT OR IGNORE INTO unidad_medida (nombre, abreviatura) VALUES
   ('Sobre', 'SOB'),
   ('Servicio', 'SVC');
 
-INSERT OR IGNORE INTO categoria_producto (nombre, requiere_lote_vencimiento, es_servicio) VALUES
-  ('Medicamento', 1, 0),
-  ('Insumo Medico', 1, 0),
-  ('Laboratorio', 0, 1),
-  ('Radiologia', 0, 1),
-  ('Servicio Hospitalario', 0, 1),
-  ('Servicio Quirurgico', 0, 1);
+INSERT OR IGNORE INTO categoria_producto (nombre, requiere_lote_vencimiento, es_servicio, prefijo) VALUES
+  ('Medicamento', 1, 0, 'MED'),
+  ('Insumo Medico', 1, 0, 'INS'),
+  ('Laboratorio', 0, 1, 'LAB'),
+  ('Radiologia', 0, 1, 'RAD'),
+  ('Servicio Hospitalario', 0, 1, 'SVC'),
+  ('Servicio Quirurgico', 0, 1, 'QUI');
 
 INSERT OR IGNORE INTO area (nombre, tipo, bajo_llave) VALUES
   ('Almacen Central', 'almacen', 1),

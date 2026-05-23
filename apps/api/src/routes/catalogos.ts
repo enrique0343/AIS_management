@@ -15,7 +15,7 @@ app.get("/unidades-medida", async (c) => {
 
 app.get("/categorias", async (c) => {
   const { results } = await c.env.DB.prepare(
-    `SELECT id, nombre, requiere_lote_vencimiento, es_servicio
+    `SELECT id, nombre, prefijo, requiere_lote_vencimiento, es_servicio
        FROM categoria_producto ORDER BY nombre`
   ).all();
   return c.json({ data: results });
@@ -23,12 +23,14 @@ app.get("/categorias", async (c) => {
 
 app.post("/categorias", requireRole("admin"), async (c) => {
   const body = await c.req.json().catch(() => null);
-  if (!body?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  if (!body?.nombre || !body?.prefijo) return c.json({ error: "nombre_y_prefijo_requeridos" }, 400);
+  const prefijo = String(body.prefijo).toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (prefijo.length < 2 || prefijo.length > 5) return c.json({ error: "prefijo_invalido_2_a_5_alfanumerico" }, 400);
   const r = await c.env.DB.prepare(
-    `INSERT INTO categoria_producto (nombre, requiere_lote_vencimiento, es_servicio)
-     VALUES (?, ?, ?)`
+    `INSERT INTO categoria_producto (nombre, prefijo, requiere_lote_vencimiento, es_servicio)
+     VALUES (?, ?, ?, ?)`
   )
-    .bind(body.nombre, body.requiere_lote_vencimiento ? 1 : 0, body.es_servicio ? 1 : 0)
+    .bind(body.nombre, prefijo, body.requiere_lote_vencimiento ? 1 : 0, body.es_servicio ? 1 : 0)
     .run();
   return c.json({ id: r.meta.last_row_id });
 });

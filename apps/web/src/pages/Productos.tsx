@@ -59,15 +59,29 @@ export default function Productos() {
       precio_venta: Number(form.precio_venta),
       punto_reorden: Number(form.punto_reorden),
     };
-    if (editId) {
-      await api.put(`/api/productos/${editId}`, payload);
-    } else {
-      await api.post("/api/productos", payload);
+    try {
+      if (editId) {
+        await api.put(`/api/productos/${editId}`, payload);
+      } else {
+        await api.post("/api/productos", payload);
+      }
+      setShow(false);
+      setEditId(null);
+      setForm(blankForm);
+      load();
+    } catch (e: any) {
+      alert(e.message);
     }
-    setShow(false);
-    setEditId(null);
-    setForm(blankForm);
-    load();
+  };
+
+  const onChangeCategoria = async (catId: string) => {
+    setForm((f: any) => ({ ...f, categoria_id: catId }));
+    if (catId && !editId) {
+      try {
+        const r = await api.get<{ siguiente: string }>(`/api/productos/_siguiente-codigo?categoria_id=${catId}`);
+        setForm((f: any) => ({ ...f, codigo: r.siguiente }));
+      } catch {}
+    }
   };
 
   const editar = async (p: Producto) => {
@@ -133,13 +147,14 @@ export default function Productos() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
           <div className="card w-full max-w-lg space-y-3">
             <h2 className="font-semibold">{editId ? "Editar producto" : "Nuevo producto"}</h2>
-            <input className="input" placeholder="Codigo" value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} />
+            <select className="input" value={form.categoria_id} onChange={(e) => onChangeCategoria(e.target.value)}>
+              <option value="">-- Categoria --</option>
+              {cats.map((c) => <option key={c.id} value={c.id}>{c.nombre} [{(c as any).prefijo}]{c.requiere_lote_vencimiento ? " (lote)" : ""}</option>)}
+            </select>
+            <input className="input font-mono" placeholder="Codigo (autosugerido)" value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value.toUpperCase() })} />
+            <p className="text-xs text-slate-500 -mt-2">El codigo debe iniciar con el prefijo de la categoria seleccionada.</p>
             <input className="input" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
             <input className="input" placeholder="Principio activo" value={form.principio_activo} onChange={(e) => setForm({ ...form, principio_activo: e.target.value })} />
-            <select className="input" value={form.categoria_id} onChange={(e) => setForm({ ...form, categoria_id: e.target.value })}>
-              <option value="">-- Categoria --</option>
-              {cats.map((c) => <option key={c.id} value={c.id}>{c.nombre}{c.requiere_lote_vencimiento ? " (lote)" : ""}</option>)}
-            </select>
             <select className="input" value={form.unidad_medida_id} onChange={(e) => setForm({ ...form, unidad_medida_id: e.target.value })}>
               <option value="">-- Unidad --</option>
               {unidades.map((u) => <option key={u.id} value={u.id}>{u.nombre} ({u.abreviatura})</option>)}

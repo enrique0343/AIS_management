@@ -167,27 +167,31 @@ function Habitaciones() {
 
 function Categorias() {
   const [items, setItems] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({ nombre: "", requiere_lote_vencimiento: false, es_servicio: false });
+  const [form, setForm] = useState<any>({ nombre: "", prefijo: "", requiere_lote_vencimiento: false, es_servicio: false });
   const load = () => api.get<{ data: any[] }>("/api/catalogos/categorias").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
   const submit = async () => {
-    if (!form.nombre) return;
-    await api.post("/api/catalogos/categorias", form);
-    setForm({ nombre: "", requiere_lote_vencimiento: false, es_servicio: false });
-    load();
+    if (!form.nombre || !form.prefijo) { alert("Nombre y prefijo requeridos"); return; }
+    try {
+      await api.post("/api/catalogos/categorias", form);
+      setForm({ nombre: "", prefijo: "", requiere_lote_vencimiento: false, es_servicio: false });
+      load();
+    } catch (e: any) { alert(e.message); }
   };
   return (
     <Section>
-      <div className="grid grid-cols-6 gap-2 mb-3">
+      <div className="grid grid-cols-7 gap-2 mb-3">
         <input className="input col-span-2" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        <input className="input" placeholder="Prefijo (MED)" maxLength={5} value={form.prefijo} onChange={(e) => setForm({ ...form, prefijo: e.target.value.toUpperCase() })} />
         <label className="flex items-center gap-2 text-sm col-span-2"><input type="checkbox" checked={form.requiere_lote_vencimiento} onChange={(e) => setForm({ ...form, requiere_lote_vencimiento: e.target.checked })} /> Requiere lote/vencimiento</label>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.es_servicio} onChange={(e) => setForm({ ...form, es_servicio: e.target.checked })} /> Es servicio</label>
         <button className="btn" onClick={submit}>+ Agregar</button>
       </div>
+      <p className="text-xs text-slate-500 mb-2">El prefijo define el codigo de los productos de esta categoria (ej. MED-0001).</p>
       <table className="table">
-        <thead><tr><th>Nombre</th><th>Lote/Vence</th><th>Servicio</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>Prefijo</th><th>Lote/Vence</th><th>Servicio</th></tr></thead>
         <tbody>{items.map((c) => (
-          <tr key={c.id}><td>{c.nombre}</td><td>{c.requiere_lote_vencimiento ? "Si" : ""}</td><td>{c.es_servicio ? "Si" : ""}</td></tr>
+          <tr key={c.id}><td>{c.nombre}</td><td><span className="font-mono text-xs px-1 bg-slate-100 rounded">{c.prefijo}</span></td><td>{c.requiere_lote_vencimiento ? "Si" : ""}</td><td>{c.es_servicio ? "Si" : ""}</td></tr>
         ))}</tbody>
       </table>
     </Section>
