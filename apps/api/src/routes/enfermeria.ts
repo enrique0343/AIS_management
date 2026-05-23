@@ -150,11 +150,13 @@ app.post(
       return c.json({ error: "cantidad_invalida", maximo_disponible: cp.cantidad }, 400);
     }
     const session = c.get("session")!;
+    // Enfermeria puede seleccionar un lote diferente al del consumo si hubo error en el despacho
+    const loteId = b.lote_id != null ? Number(b.lote_id) : cp.lote_id;
     await c.env.DB.prepare(
       `INSERT INTO devolucion_pendiente
          (consumo_id, producto_id, lote_id, cantidad, area_destino_id, observaciones, solicitante_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).bind(id, cp.producto_id, cp.lote_id, cantDev, b.area_destino_id, b.observaciones ?? null, session.usuario_id).run();
+    ).bind(id, cp.producto_id, loteId, cantDev, b.area_destino_id, b.observaciones ?? null, session.usuario_id).run();
     await logAudit(c.env, { usuario_id: session.usuario_id, accion: "solicitar_devolucion", entidad: "consumo_paciente", entidad_id: id, payload: { cantidad: cantDev, area_destino_id: b.area_destino_id }, ip: c.get("ip") });
     return c.json({ ok: true });
   }

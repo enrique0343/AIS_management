@@ -80,6 +80,15 @@ app.get("/areas", async (c) => {
   return c.json({ data: results });
 });
 
+app.get("/lotes-producto", async (c) => {
+  const pid = c.req.query("producto_id");
+  if (!pid) return c.json({ error: "producto_id_requerido" }, 400);
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, numero_lote, fecha_vencimiento FROM lote WHERE producto_id = ? ORDER BY fecha_vencimiento ASC`
+  ).bind(parseInt(pid, 10)).all();
+  return c.json({ data: results });
+});
+
 app.post("/areas", requireRole("admin"), async (c) => {
   const b = await c.req.json().catch(() => null);
   if (!b?.nombre || !b?.tipo) return c.json({ error: "datos_invalidos" }, 400);
