@@ -100,4 +100,21 @@ app.post("/areas", requireRole("admin"), async (c) => {
   return c.json({ id: r.meta.last_row_id });
 });
 
+app.get("/srs", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  if (q.length < 2) return c.json({ data: [] });
+  const like = `%${q}%`;
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, registro_sanitario, nombre_comercial, principio_activo,
+            concentracion, forma_farmaceutica, fabricante, pvmp
+       FROM catalogo_srs
+      WHERE estado = 'A'
+        AND (nombre_comercial LIKE ? OR principio_activo LIKE ? OR registro_sanitario LIKE ?)
+      LIMIT 20`
+  )
+    .bind(like, like, like)
+    .all();
+  return c.json({ data: results });
+});
+
 export default app;

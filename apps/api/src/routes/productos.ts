@@ -128,11 +128,16 @@ app.post("/", requireRole("admin", "jefe_farmacia_central", "farmaceutico"), asy
     }, 400);
   }
 
+  if (!d.pvmp_srs && d.precio_venta <= 0) {
+    return c.json({ error: "precio_venta_requerido", mensaje: "El precio de venta es obligatorio cuando el producto no tiene PVMP regulado." }, 400);
+  }
+
   const r = await c.env.DB.prepare(
     `INSERT INTO producto (codigo, nombre, principio_activo, categoria_id, unidad_medida_id,
-       laboratorio_id, registro_sanitario, es_controlado, requiere_receta_especial,
+       unidad_compra_id, factor_conversion, laboratorio_id, registro_sanitario,
+       pvmp_srs, es_controlado, requiere_receta_especial,
        condiciones_almacenamiento, precio_venta, punto_reorden, stock_minimo, stock_maximo, activo)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       d.codigo,
@@ -140,8 +145,11 @@ app.post("/", requireRole("admin", "jefe_farmacia_central", "farmaceutico"), asy
       d.principio_activo ?? null,
       d.categoria_id,
       d.unidad_medida_id,
+      d.unidad_compra_id ?? null,
+      d.factor_conversion ?? 1,
       d.laboratorio_id ?? null,
       d.registro_sanitario ?? null,
+      d.pvmp_srs ?? null,
       d.es_controlado ? 1 : 0,
       d.requiere_receta_especial ? 1 : 0,
       d.condiciones_almacenamiento ?? null,

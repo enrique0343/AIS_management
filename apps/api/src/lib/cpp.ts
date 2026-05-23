@@ -1,19 +1,25 @@
 import type { Bindings } from "../env";
 
 /**
- * Costo Promedio Ponderado (CPP).
+ * Costo Promedio Ponderado (CPP) — siempre en unidad de VENTA.
  *
- *   CPP_nuevo = (existencia_total * CPP_actual + cantidad_recibida * costo_unitario)
- *               / (existencia_total + cantidad_recibida)
+ * Cuando el producto tiene unidad de compra diferente a la de venta:
+ *   - cantidadCompra: unidades de compra recibidas (ej. 5 cajas)
+ *   - costoUnitarioCompra: costo por unidad de compra (ej. $30/caja)
+ *   - factorConversion: unidades de venta por unidad de compra (ej. 30 tabletas/caja)
  *
- * Se invoca al confirmar una recepcion de compra, una linea por vez.
- * Si la existencia total es 0, el CPP queda igual al costo unitario recibido.
+ * El CPP se recalcula en unidades de venta:
+ *   cantidadVenta   = cantidadCompra * factorConversion
+ *   costoVenta      = costoUnitarioCompra / factorConversion
+ *   CPP_nuevo = (existencia_total * CPP_actual + cantidadVenta * costoVenta)
+ *               / (existencia_total + cantidadVenta)
  */
 export async function recalcCPP(
   env: Bindings,
   productoId: number,
-  cantidadRecibida: number,
-  costoUnitario: number
+  cantidadCompra: number,
+  costoUnitarioCompra: number,
+  factorConversion = 1
 ): Promise<number> {
   const prod = await env.DB.prepare(
     `SELECT costo_promedio_ponderado AS cpp FROM producto WHERE id = ?`
@@ -29,17 +35,20 @@ export async function recalcCPP(
     .first<{ total: number }>();
   const existenciaTotal = existRow?.total ?? 0;
 
+  const factor = factorConversion > 0 ? factorConversion : 1;
+  const cantidadVenta = cantidadCompra * factor;
+  const costoVenta = costoUnitarioCompra / factor;
+
   let nuevo: number;
-  if (existenciaTotal + cantidadRecibida <= 0) {
-    nuevo = costoUnitario;
+  if (existenciaTotal + cantidadVenta <= 0) {
+    nuevo = costoVenta;
   } else if (existenciaTotal <= 0) {
-    nuevo = costoUnitario;
+    nuevo = costoVenta;
   } else {
     nuevo =
-      (existenciaTotal * (prod.cpp ?? 0) + cantidadRecibida * costoUnitario) /
-      (existenciaTotal + cantidadRecibida);
+      (existenciaTotal * (prod.cpp ?? 0) + cantidadVenta * costoVenta) /
+      (existenciaTotal + cantidadVenta);
   }
-  // Redondeo a 6 decimales para estabilidad numerica.
   nuevo = Math.round(nuevo * 1e6) / 1e6;
 
   await env.DB.prepare(`UPDATE producto SET costo_promedio_ponderado = ? WHERE id = ?`)

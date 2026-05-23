@@ -173,18 +173,23 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
   const recepcionId = recIns.meta.last_row_id as number;
 
   for (const item of d.detalles) {
-    // Validar producto y categoria
+    // Validar producto y categoria; obtener factor de conversion
     const prod = await c.env.DB.prepare(
-      `SELECT p.id, p.es_controlado, c.requiere_lote_vencimiento
+      `SELECT p.id, p.es_controlado, p.factor_conversion,
+              c.requiere_lote_vencimiento
          FROM producto p JOIN categoria_producto c ON c.id = p.categoria_id WHERE p.id = ?`
     )
       .bind(item.producto_id)
-      .first<{ id: number; es_controlado: number; requiere_lote_vencimiento: number }>();
+      .first<{ id: number; es_controlado: number; requiere_lote_vencimiento: number; factor_conversion: number }>();
     if (!prod) return c.json({ error: "producto_no_encontrado", producto_id: item.producto_id }, 400);
 
     if (prod.requiere_lote_vencimiento && (!item.lote_numero || !item.fecha_vencimiento)) {
       return c.json({ error: "lote_requerido", producto_id: item.producto_id }, 400);
     }
+
+    // Conversion: item.cantidad esta en unidades de compra, convertir a unidades de venta
+    const factor = (prod.factor_conversion ?? 1) > 0 ? (prod.factor_conversion ?? 1) : 1;
+    const cantidadVenta = item.cantidad * factor;
 
     // Lote (si aplica)
     let loteId: number | null = null;
@@ -206,7 +211,7 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
       }
     }
 
-    // Detalle recepcion
+    // Detalle recepcion: guarda cantidad en unidades de compra, costo por unidad de compra
     await c.env.DB.prepare(
       `INSERT INTO recepcion_compra_detalle
          (recepcion_id, producto_id, lote_numero, fecha_vencimiento, cantidad, costo_unitario, n_autorizacion_srs)
@@ -223,10 +228,10 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
       )
       .run();
 
-    // Recalcular CPP ANTES de sumar existencia (la formula usa existencia previa)
-    await recalcCPP(c.env, item.producto_id, item.cantidad, item.costo_unitario);
+    // CPP en unidades de venta — pasa factor para que cpp.ts calcule costo/unidad_venta
+    await recalcCPP(c.env, item.producto_id, item.cantidad, item.costo_unitario, factor);
 
-    // Sumar existencia (area destino + lote)
+    // Sumar existencia en unidades de venta (area destino + lote)
     const existRow = await c.env.DB.prepare(
       `SELECT id, cantidad FROM existencia
         WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
@@ -235,17 +240,18 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
       .first<{ id: number; cantidad: number }>();
     if (existRow) {
       await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ?`)
-        .bind(item.cantidad, existRow.id)
+        .bind(cantidadVenta, existRow.id)
         .run();
     } else {
       await c.env.DB.prepare(
         `INSERT INTO existencia (producto_id, area_id, lote_id, cantidad) VALUES (?, ?, ?, ?)`
       )
-        .bind(item.producto_id, areaDestinoId, loteId, item.cantidad)
+        .bind(item.producto_id, areaDestinoId, loteId, cantidadVenta)
         .run();
     }
 
-    // Movimiento
+    // Movimiento en unidades de venta; costo_unitario = por unidad de venta (costo_compra/factor)
+    const costoVenta = Math.round((item.costo_unitario / factor) * 1e6) / 1e6;
     await c.env.DB.prepare(
       `INSERT INTO movimiento_inventario
          (tipo, producto_id, lote_id, area_destino_id, cantidad, costo_unitario,
@@ -256,8 +262,8 @@ app.post("/recepciones", requireRole("admin", "jefe_farmacia_central"), async (c
         item.producto_id,
         loteId,
         areaDestinoId,
-        item.cantidad,
-        item.costo_unitario,
+        cantidadVenta,
+        costoVenta,
         c.get("session")!.usuario_id,
         d.orden_compra_id,
         item.n_autorizacion_srs ?? null
