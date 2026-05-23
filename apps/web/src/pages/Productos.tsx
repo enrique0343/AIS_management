@@ -6,6 +6,7 @@ type Producto = {
   codigo: string;
   nombre: string;
   principio_activo: string | null;
+  registro_sanitario: string | null;
   es_controlado: number;
   categoria: string;
   unidad: string;
@@ -218,7 +219,7 @@ export default function Productos() {
         <table className="table">
           <thead>
             <tr>
-              <th>Codigo</th><th>Nombre</th><th>Categoria</th><th>Unidad venta</th>
+              <th>Codigo</th><th>Nombre</th><th>Reg. Sanitario</th><th>Categoria</th><th>Unidad venta</th>
               <th>CPP</th><th>Precio</th><th>Stock</th><th>Reorden</th><th>Ctrl</th><th></th>
             </tr>
           </thead>
@@ -230,6 +231,7 @@ export default function Productos() {
                   <div>{p.nombre}</div>
                   {p.principio_activo && <div className="text-xs text-slate-500">{p.principio_activo}</div>}
                 </td>
+                <td className="font-mono text-xs text-slate-600">{p.registro_sanitario ?? "—"}</td>
                 <td>{p.categoria}</td>
                 <td>{p.unidad}</td>
                 <td>{Number(p.costo_promedio_ponderado).toFixed(4)}</td>
@@ -303,7 +305,10 @@ export default function Productos() {
             <p className="text-xs text-slate-500 -mt-2">El codigo debe iniciar con el prefijo de la categoria seleccionada.</p>
             <input className="input" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
             <input className="input" placeholder="Principio activo" value={form.principio_activo} onChange={(e) => setForm({ ...form, principio_activo: e.target.value })} />
-            <input className="input" placeholder="Registro sanitario" value={form.registro_sanitario} onChange={(e) => setForm({ ...form, registro_sanitario: e.target.value })} />
+            <div>
+              <label className="text-xs font-medium text-slate-700">Registro sanitario</label>
+              <input className="input font-mono" placeholder="Ej: F035608072009" value={form.registro_sanitario} onChange={(e) => setForm({ ...form, registro_sanitario: e.target.value })} />
+            </div>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.es_controlado} onChange={(e) => setForm({ ...form, es_controlado: e.target.checked, requiere_receta_especial: e.target.checked })} />
               Producto controlado (SRS)
