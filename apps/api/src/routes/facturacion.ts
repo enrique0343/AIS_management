@@ -263,6 +263,23 @@ app.post(
     if (ep.estado !== "activo") return c.json({ error: "episodio_no_activo" }, 400);
     if (!ep.alta_solicitada_en) return c.json({ error: "alta_no_solicitada", mensaje: "Enfermeria debe solicitar el alta antes de facturar" }, 400);
 
+    // Bloquear si hay devoluciones pendientes o requisiciones activas
+    const devRow = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM devolucion_pendiente dp
+         JOIN consumo_paciente cp ON cp.id = dp.consumo_id
+        WHERE cp.episodio_id = ? AND dp.estado = 'pendiente'`
+    ).bind(epId).first<{ n: number }>();
+    if ((devRow?.n ?? 0) > 0) {
+      return c.json({ error: "devoluciones_pendientes", mensaje: `Hay ${devRow!.n} devolucion(es) pendiente(s) de procesar en farmacia` }, 400);
+    }
+    const reqRow = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM requisicion
+        WHERE episodio_id = ? AND estado IN ('pendiente', 'despachada_parcial')`
+    ).bind(epId).first<{ n: number }>();
+    if ((reqRow?.n ?? 0) > 0) {
+      return c.json({ error: "requisiciones_activas", mensaje: `Hay ${reqRow!.n} requisicion(es) activa(s) sin completar` }, 400);
+    }
+
     // Egresar habitacion activa del paciente (libera cama y la vuelve facturable)
     await c.env.DB.prepare(
       `UPDATE ocupacion_habitacion
