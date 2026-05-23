@@ -24,6 +24,27 @@ app.post("/categorias", requireRole("admin"), async (c) => {
   return c.json({ id: r.meta.last_row_id });
 });
 
+app.get("/proveedores", async (c) => {
+  const q = c.req.query("q") ?? "";
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, nombre FROM proveedor WHERE activo = 1 AND nombre LIKE ? ORDER BY nombre LIMIT 50`
+  ).bind(`%${q}%`).all();
+  return c.json({ data: results });
+});
+
+app.post("/proveedores", requireRole("admin", "facturacion"), async (c) => {
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre?.trim()) return c.json({ error: "nombre_requerido" }, 400);
+  const existe = await c.env.DB.prepare(
+    `SELECT id FROM proveedor WHERE nombre = ? AND activo = 1`
+  ).bind(b.nombre.trim()).first<{ id: number }>();
+  if (existe) return c.json({ id: existe.id, nombre: b.nombre.trim() });
+  const r = await c.env.DB.prepare(
+    `INSERT INTO proveedor (nombre, activo) VALUES (?, 1)`
+  ).bind(b.nombre.trim()).run();
+  return c.json({ id: r.meta.last_row_id, nombre: b.nombre.trim() });
+});
+
 app.get("/", async (c) => {
   const desde = c.req.query("desde");
   const hasta = c.req.query("hasta");

@@ -1,23 +1,75 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 
 type Cat = { id: number; nombre: string };
+type Prov = { id: number; nombre: string };
 type Gasto = { id: number; fecha: string; categoria: string; proveedor: string | null; descripcion: string; monto: number; doc_r2_key: string | null; usuario: string | null };
 
 export default function Gastos() {
   const [cats, setCats] = useState<Cat[]>([]);
+  const [proveedores, setProveedores] = useState<Prov[]>([]);
   const [items, setItems] = useState<Gasto[]>([]);
   const [desde, setDesde] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
   const [hasta, setHasta] = useState(() => new Date().toISOString().slice(0, 10));
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState<any>({ fecha: new Date().toISOString().slice(0, 10), categoria_id: "", proveedor: "", descripcion: "", monto: 0 });
+  const [form, setForm] = useState<any>({ fecha: new Date().toISOString().slice(0, 10), categoria_id: "", proveedor: "", descripcion: "", monto: "" });
   const [soporte, setSoporte] = useState<File | null>(null);
 
+  // Proveedor combobox state
+  const [provSearch, setProvSearch] = useState("");
+  const [provOpen, setProvOpen] = useState(false);
+  const [provCreando, setProvCreando] = useState(false);
+  const provRef = useRef<HTMLDivElement>(null);
+
+  const loadProveedores = () =>
+    api.get<{ data: Prov[] }>("/api/gastos/proveedores").then((r) => setProveedores(r.data));
+
   const load = () => api.get<{ data: Gasto[] }>(`/api/gastos?desde=${desde}&hasta=${hasta}`).then((r) => setItems(r.data));
+
   useEffect(() => {
     api.get<{ data: Cat[] }>("/api/gastos/categorias").then((r) => setCats(r.data));
+    loadProveedores();
   }, []);
   useEffect(() => { load(); }, [desde, hasta]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (provRef.current && !provRef.current.contains(e.target as Node)) setProvOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtProveedores = proveedores.filter((p) =>
+    p.nombre.toLowerCase().includes(provSearch.toLowerCase())
+  );
+  const exactMatch = proveedores.some((p) => p.nombre.toLowerCase() === provSearch.trim().toLowerCase());
+
+  const selProv = (nombre: string) => {
+    setProvSearch(nombre);
+    setForm((f: any) => ({ ...f, proveedor: nombre }));
+    setProvOpen(false);
+  };
+
+  const crearProveedor = async () => {
+    const nombre = provSearch.trim();
+    if (!nombre) return;
+    setProvCreando(true);
+    try {
+      await api.post<{ id: number; nombre: string }>("/api/gastos/proveedores", { nombre });
+      await loadProveedores();
+      selProv(nombre);
+    } catch { alert("Error al crear proveedor"); }
+    setProvCreando(false);
+  };
+
+  const limpiarForm = () => {
+    setForm({ fecha: new Date().toISOString().slice(0, 10), categoria_id: "", proveedor: "", descripcion: "", monto: "" });
+    setProvSearch("");
+    setProvOpen(false);
+    setSoporte(null);
+  };
 
   const submit = async () => {
     if (!form.categoria_id || !form.descripcion || !form.monto) { alert("Categoria, descripcion y monto requeridos"); return; }
@@ -31,8 +83,7 @@ export default function Gastos() {
         await fetch(`/api/gastos/${r.id}/soporte`, { method: "POST", body: fd, credentials: "include" });
       }
       setShow(false);
-      setForm({ fecha: new Date().toISOString().slice(0, 10), categoria_id: "", proveedor: "", descripcion: "", monto: 0 });
-      setSoporte(null);
+      limpiarForm();
       load();
     } catch (e: any) { alert(e.message); }
   };
@@ -70,7 +121,7 @@ export default function Gastos() {
       </div>
 
       {show && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="card w-full max-w-md space-y-3">
             <h2 className="font-semibold">Nuevo gasto</h2>
             <input className="input" type="date" value={form.fecha} onChange={(e) => setForm({ ...form, fecha: e.target.value })} />
@@ -79,14 +130,67 @@ export default function Gastos() {
               {cats.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
             <input className="input" placeholder="Descripcion" value={form.descripcion} onChange={(e) => setForm({ ...form, descripcion: e.target.value })} />
-            <input className="input" placeholder="Proveedor (opcional)" value={form.proveedor} onChange={(e) => setForm({ ...form, proveedor: e.target.value })} />
-            <input className="input" type="number" step="0.01" placeholder="Monto" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} />
+
+            {/* Proveedor combobox */}
+            <div className="relative" ref={provRef}>
+              <label className="text-xs font-medium text-slate-600">Proveedor (opcional)</label>
+              <input
+                className="input mt-0.5"
+                placeholder="Buscar o crear proveedor..."
+                value={provSearch}
+                onChange={(e) => {
+                  setProvSearch(e.target.value);
+                  setForm((f: any) => ({ ...f, proveedor: e.target.value }));
+                  setProvOpen(true);
+                }}
+                onFocus={() => setProvOpen(true)}
+                autoComplete="off"
+              />
+              {provSearch && (
+                <button
+                  type="button"
+                  className="absolute right-2 top-8 text-slate-400 hover:text-slate-600 text-sm"
+                  onClick={() => { setProvSearch(""); setForm((f: any) => ({ ...f, proveedor: "" })); setProvOpen(false); }}
+                >
+                  ✕
+                </button>
+              )}
+              {provOpen && (filtProveedores.length > 0 || (provSearch.trim() && !exactMatch)) && (
+                <div className="absolute z-20 w-full bg-white border border-slate-200 rounded-md shadow-lg mt-1 max-h-52 overflow-auto">
+                  {filtProveedores.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                      onMouseDown={(e) => { e.preventDefault(); selProv(p.nombre); }}
+                    >
+                      {p.nombre}
+                    </button>
+                  ))}
+                  {provSearch.trim() && !exactMatch && (
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm text-blue-600 hover:bg-blue-50 border-t border-slate-100 font-medium"
+                      onMouseDown={(e) => { e.preventDefault(); crearProveedor(); }}
+                      disabled={provCreando}
+                    >
+                      {provCreando ? "Creando..." : `+ Crear "${provSearch.trim()}"`}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-600">Monto ($)</label>
+              <input className="input mt-0.5" type="number" step="0.01" min="0" placeholder="0.00" value={form.monto} onChange={(e) => setForm({ ...form, monto: e.target.value })} />
+            </div>
             <div>
               <label className="text-xs">Soporte (recibo/factura, PDF o imagen, max 10MB)</label>
               <input className="input" type="file" accept="application/pdf,image/*" onChange={(e) => setSoporte(e.target.files?.[0] ?? null)} />
             </div>
             <div className="flex justify-end gap-2">
-              <button className="btn-secondary" onClick={() => setShow(false)}>Cancelar</button>
+              <button className="btn-secondary" onClick={() => { setShow(false); limpiarForm(); }}>Cancelar</button>
               <button className="btn" onClick={submit}>Guardar</button>
             </div>
           </div>
