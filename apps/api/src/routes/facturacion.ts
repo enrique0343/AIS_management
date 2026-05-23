@@ -234,6 +234,48 @@ app.get("/pendientes-alta", async (c) => {
   return c.json({ data: results });
 });
 
+// Resumen de cuenta por categoria para el modal de revision antes de facturar
+app.get("/episodios/:id/resumen-cuenta", requireRole("admin", "facturacion"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const epInfo = await c.env.DB.prepare(
+    `SELECT e.id, e.fecha_inicio, e.alta_solicitada_en,
+            p.id AS paciente_id, p.nombres, p.apellidos, p.expediente,
+            p.documento_tipo, p.documento_numero,
+            pm.nombres || ' ' || pm.apellidos AS medico
+       FROM episodio_atencion e
+       JOIN paciente p ON p.id = e.paciente_id
+       LEFT JOIN profesional_medico pm ON pm.id = e.medico_id
+      WHERE e.id = ?`
+  ).bind(id).first();
+  const { results: categorias } = await c.env.DB.prepare(
+    `SELECT cat.id AS categoria_id, cat.nombre AS categoria,
+            ROUND(SUM(cp.precio_venta_snapshot * cp.cantidad), 2) AS subtotal,
+            COUNT(*) AS items
+       FROM consumo_paciente cp
+       JOIN producto p ON p.id = cp.producto_id
+       JOIN categoria_producto cat ON cat.id = p.categoria_id
+      WHERE cp.episodio_id = ? AND cp.factura_detalle_id IS NULL
+      GROUP BY cat.id, cat.nombre
+      ORDER BY cat.nombre`
+  ).bind(id).all();
+  const habRow = await c.env.DB.prepare(
+    `SELECT ROUND(COALESCE(SUM(
+       MAX(CAST((julianday(COALESCE(oh.fecha_egreso,datetime('now')))-julianday(oh.fecha_ingreso)) AS INTEGER),1)
+       * oh.precio_diario_snapshot
+     ),0),2) AS subtotal, COUNT(*) AS registros
+       FROM ocupacion_habitacion oh
+      WHERE oh.episodio_id = ? AND oh.factura_detalle_id IS NULL`
+  ).bind(id).first<{ subtotal: number; registros: number }>();
+  const subtotalConsumos = (categorias as any[]).reduce((s: number, c: any) => s + Number(c.subtotal), 0);
+  return c.json({
+    episodio: epInfo,
+    categorias,
+    habitacion: habRow,
+    subtotal_consumos: +subtotalConsumos.toFixed(2),
+    subtotal_total: +(subtotalConsumos + Number(habRow?.subtotal ?? 0)).toFixed(2),
+  });
+});
+
 // Conteo ligero para badge en menu
 app.get("/_alta_count", async (c) => {
   const row = await c.env.DB.prepare(
@@ -299,15 +341,17 @@ app.post(
       .bind(ep.id, ep.paciente_id)
       .run();
 
-    // Cargos no facturados
+    // Cargos no facturados (con categoria para aplicar descuentos)
     const consumos = await c.env.DB.prepare(
-      `SELECT cp.id, cp.cantidad, cp.precio_venta_snapshot, p.nombre AS producto
+      `SELECT cp.id, cp.cantidad, cp.precio_venta_snapshot, p.nombre AS producto,
+              cat.nombre AS categoria
          FROM consumo_paciente cp
          JOIN producto p ON p.id = cp.producto_id
+         JOIN categoria_producto cat ON cat.id = p.categoria_id
         WHERE cp.episodio_id = ? AND cp.factura_detalle_id IS NULL`
     )
       .bind(ep.id)
-      .all<{ id: number; cantidad: number; precio_venta_snapshot: number; producto: string }>();
+      .all<{ id: number; cantidad: number; precio_venta_snapshot: number; producto: string; categoria: string }>();
 
     const ocupaciones = await c.env.DB.prepare(
       `SELECT o.id, o.precio_diario_snapshot, h.numero AS habitacion, h.tipo AS habitacion_tipo,
@@ -323,25 +367,65 @@ app.post(
         fecha_ingreso: string; fecha_egreso: string; dias: number;
       }>();
 
-    let subtotal = 0;
-    for (const c0 of consumos.results ?? []) subtotal += c0.cantidad * c0.precio_venta_snapshot;
-    for (const o of ocupaciones.results ?? []) subtotal += o.dias * o.precio_diario_snapshot;
-    for (const e of cargosExtra) subtotal += e.cantidad * e.precio_unitario;
+    // Subtotales brutos por categoria
+    const catSubtotals = new Map<string, number>();
+    for (const c0 of consumos.results ?? []) {
+      catSubtotals.set(c0.categoria, +((catSubtotals.get(c0.categoria) ?? 0) + c0.cantidad * c0.precio_venta_snapshot));
+    }
+    let subtotalBruto = 0;
+    for (const [, sub] of catSubtotals) subtotalBruto += sub;
+    for (const o of ocupaciones.results ?? []) subtotalBruto += o.dias * o.precio_diario_snapshot;
+    for (const e of cargosExtra) subtotalBruto += e.cantidad * e.precio_unitario;
 
-    // Permitir cierre sin cargos (factura $0) si admin lo confirma
-    if (subtotal === 0 && !body.permitir_cero) {
+    // Descuentos
+    type DescIn = { tipo: string; valor: number };
+    const calcDescMonto = (base: number, d: DescIn) =>
+      d.tipo === "pct" ? +(base * d.valor / 100).toFixed(2) : +Math.min(d.valor, base).toFixed(2);
+
+    const descGlobal: DescIn | null =
+      body.descuento_global && Number(body.descuento_global.valor) > 0 ? body.descuento_global : null;
+    const descCatArr: Array<{ categoria: string; tipo: string; valor: number }> =
+      Array.isArray(body.descuentos_categoria)
+        ? body.descuentos_categoria.filter((d: any) => Number(d.valor) > 0)
+        : [];
+
+    const catDescuentoMap = new Map<string, { label: string; monto: number }>();
+    for (const dc of descCatArr) {
+      const catSub = catSubtotals.get(dc.categoria) ?? 0;
+      if (!catSub) continue;
+      const monto = calcDescMonto(catSub, dc);
+      if (!monto) continue;
+      catDescuentoMap.set(dc.categoria, {
+        label: `Descuento ${dc.categoria} (${dc.tipo === "pct" ? dc.valor + "%" : "$" + monto.toFixed(2)})`,
+        monto,
+      });
+    }
+    const totalDescCat = [...catDescuentoMap.values()].reduce((s, d) => s + d.monto, 0);
+    const subtotalAfterCat = +(subtotalBruto - totalDescCat).toFixed(2);
+
+    let globalDescMonto = 0;
+    let globalDescLabel = "";
+    if (descGlobal) {
+      globalDescMonto = calcDescMonto(subtotalAfterCat, descGlobal);
+      if (globalDescMonto > 0)
+        globalDescLabel = `Descuento general (${descGlobal.tipo === "pct" ? descGlobal.valor + "%" : "$" + globalDescMonto.toFixed(2)})`;
+    }
+
+    const subtotalNeto = +(subtotalAfterCat - globalDescMonto).toFixed(2);
+
+    if (subtotalNeto === 0 && !body.permitir_cero) {
       return c.json({ error: "nada_para_facturar", hint: "use permitir_cero=true para cerrar sin cargos" }, 400);
     }
 
-    const iva = +(subtotal * (ivaPct / 100)).toFixed(2);
-    const total = +(subtotal + iva).toFixed(2);
+    const iva = +(subtotalNeto * (ivaPct / 100)).toFixed(2);
+    const total = +(subtotalNeto + iva).toFixed(2);
     const numero = `F-${Date.now()}`;
 
     const f = await c.env.DB.prepare(
       `INSERT INTO factura (numero, paciente_id, episodio_id, subtotal, iva, total, usuario_id, observaciones)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'Cierre de cuenta - alta')`
     )
-      .bind(numero, ep.paciente_id, ep.id, subtotal, iva, total, c.get("session")!.usuario_id)
+      .bind(numero, ep.paciente_id, ep.id, subtotalNeto, iva, total, c.get("session")!.usuario_id)
       .run();
     const facturaId = f.meta.last_row_id as number;
 
@@ -383,6 +467,20 @@ app.post(
         .bind(facturaId, e.descripcion, e.cantidad, e.precio_unitario, e.cantidad * e.precio_unitario)
         .run();
     }
+    // Descuentos por categoria
+    for (const [, desc] of catDescuentoMap) {
+      await c.env.DB.prepare(
+        `INSERT INTO factura_detalle (factura_id, descripcion, cantidad, precio_unitario, subtotal)
+         VALUES (?, ?, 1, ?, ?)`
+      ).bind(facturaId, desc.label, -desc.monto, -desc.monto).run();
+    }
+    // Descuento global
+    if (globalDescMonto > 0) {
+      await c.env.DB.prepare(
+        `INSERT INTO factura_detalle (factura_id, descripcion, cantidad, precio_unitario, subtotal)
+         VALUES (?, ?, 1, ?, ?)`
+      ).bind(facturaId, globalDescLabel, -globalDescMonto, -globalDescMonto).run();
+    }
 
     await c.env.DB.prepare(
       `UPDATE episodio_atencion SET estado='cerrado', fecha_fin=datetime('now') WHERE id = ?`
@@ -395,11 +493,11 @@ app.post(
       accion: "cerrar_y_facturar",
       entidad: "episodio_atencion",
       entidad_id: ep.id,
-      payload: { factura_id: facturaId, total },
+      payload: { factura_id: facturaId, total, descuentos: totalDescCat + globalDescMonto },
       ip: c.get("ip"),
     });
 
-    return c.json({ ok: true, factura_id: facturaId, numero, subtotal, iva, total });
+    return c.json({ ok: true, factura_id: facturaId, numero, subtotal: subtotalNeto, iva, total });
   }
 );
 
@@ -515,6 +613,42 @@ app.put("/consumos/:id", requireRole("admin", "facturacion"), async (c) => {
     ip: c.get("ip"),
   });
   return c.json({ ok: true });
+});
+
+// Datos completos de una factura para impresion (detalle y resumen por categoria)
+app.get("/facturas/:id/para-print", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const f = await c.env.DB.prepare(
+    `SELECT f.*,
+            p.nombres, p.apellidos, p.expediente, p.documento_tipo, p.documento_numero,
+            e.fecha_inicio, e.fecha_fin,
+            pm.nombres || ' ' || pm.apellidos AS medico_nombre
+       FROM factura f
+       JOIN paciente p ON p.id = f.paciente_id
+       LEFT JOIN episodio_atencion e ON e.id = f.episodio_id
+       LEFT JOIN profesional_medico pm ON pm.id = e.medico_id
+      WHERE f.id = ?`
+  ).bind(id).first();
+  if (!f) return c.json({ error: "no_encontrado" }, 404);
+  const { results: detalles } = await c.env.DB.prepare(
+    `SELECT fd.*,
+            CASE
+              WHEN fd.subtotal < 0 THEN '__descuento__'
+              WHEN fd.consumo_id IS NOT NULL THEN COALESCE(cat.nombre, 'Otros')
+              WHEN fd.descripcion LIKE 'Habitacion%' THEN 'Habitacion'
+              ELSE 'Cargos adicionales'
+            END AS categoria
+       FROM factura_detalle fd
+       LEFT JOIN consumo_paciente cp ON cp.id = fd.consumo_id
+       LEFT JOIN producto p ON p.id = cp.producto_id
+       LEFT JOIN categoria_producto cat ON cat.id = p.categoria_id
+      WHERE fd.factura_id = ?
+      ORDER BY categoria, fd.id`
+  ).bind(id).all();
+  const pagos = await c.env.DB.prepare(
+    `SELECT * FROM pago WHERE factura_id = ? ORDER BY fecha`
+  ).bind(id).all();
+  return c.json({ factura: f, detalles: detalles, pagos: pagos.results });
 });
 
 // Reporte de ingresos

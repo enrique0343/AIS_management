@@ -14,6 +14,8 @@ import Catalogos from "./pages/Catalogos";
 import Profesionales from "./pages/Profesionales";
 import Usuarios from "./pages/Usuarios";
 import FacturaPrint from "./pages/FacturaPrint";
+import FacturaPrintDetalle from "./pages/FacturaPrintDetalle";
+import FacturaPrintResumen from "./pages/FacturaPrintResumen";
 import Atencion from "./pages/Atencion";
 import Gastos from "./pages/Gastos";
 import Reportes from "./pages/Reportes";
@@ -30,14 +32,9 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/facturas/:id/print"
-        element={
-          <Protected>
-            <FacturaPrint />
-          </Protected>
-        }
-      />
+      <Route path="/facturas/:id/print" element={<Protected><FacturaPrint /></Protected>} />
+      <Route path="/facturas/:id/print-detalle" element={<Protected><FacturaPrintDetalle /></Protected>} />
+      <Route path="/facturas/:id/print-resumen" element={<Protected><FacturaPrintResumen /></Protected>} />
       <Route
         path="/"
         element={
