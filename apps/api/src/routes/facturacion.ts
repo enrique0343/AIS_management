@@ -198,6 +198,50 @@ app.post("/facturas/:id/anular", requireRole("admin", "facturacion"), async (c) 
   return c.json({ ok: true });
 });
 
+// Retorna episodios con alta solicitada pendientes de revision/facturacion
+app.get("/pendientes-alta", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT e.id AS episodio_id, e.fecha_inicio, e.alta_solicitada_en,
+            p.id AS paciente_id, p.expediente, p.nombres, p.apellidos,
+            cur_hab.numero AS habitacion, cur_hab.tipo AS habitacion_tipo,
+            pm.nombres || ' ' || pm.apellidos AS medico_cabecera,
+            ROUND(COALESCE((
+              SELECT SUM(cp2.precio_venta_snapshot * cp2.cantidad)
+              FROM consumo_paciente cp2
+              WHERE cp2.episodio_id = e.id AND cp2.factura_detalle_id IS NULL
+            ), 0), 2) AS cargos_consumos,
+            ROUND(COALESCE((
+              SELECT SUM(
+                MAX(CAST((julianday(COALESCE(oh2.fecha_egreso, datetime('now'))) - julianday(oh2.fecha_ingreso)) AS INTEGER), 1)
+                * oh2.precio_diario_snapshot
+              )
+              FROM ocupacion_habitacion oh2
+              WHERE oh2.episodio_id = e.id AND oh2.factura_detalle_id IS NULL
+            ), 0), 2) AS cargos_habitacion,
+            (SELECT COUNT(*) FROM devolucion_pendiente dp
+               JOIN consumo_paciente cp3 ON cp3.id = dp.consumo_id
+              WHERE cp3.episodio_id = e.id AND dp.estado = 'pendiente') AS devoluciones_pendientes,
+            (SELECT COUNT(*) FROM requisicion r2
+              WHERE r2.episodio_id = e.id AND r2.estado IN ('pendiente', 'despachada_parcial')) AS requisiciones_activas
+       FROM episodio_atencion e
+       JOIN paciente p ON p.id = e.paciente_id
+       LEFT JOIN ocupacion_habitacion cur_occ ON cur_occ.paciente_id = p.id AND cur_occ.fecha_egreso IS NULL
+       LEFT JOIN habitacion cur_hab ON cur_hab.id = cur_occ.habitacion_id
+       LEFT JOIN profesional_medico pm ON pm.id = e.medico_id
+      WHERE e.alta_solicitada_en IS NOT NULL AND e.estado = 'activo'
+      ORDER BY e.alta_solicitada_en ASC`
+  ).all();
+  return c.json({ data: results });
+});
+
+// Conteo ligero para badge en menu
+app.get("/_alta_count", async (c) => {
+  const row = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM episodio_atencion WHERE alta_solicitada_en IS NOT NULL AND estado = 'activo'`
+  ).first<{ n: number }>();
+  return c.json({ n: row?.n ?? 0 });
+});
+
 // Cierra y factura: egresa habitacion activa del episodio, genera la factura,
 // cierra el episodio. Documento interno (sin valor fiscal).
 app.post(
@@ -211,12 +255,13 @@ app.post(
       Array.isArray(body.cargos_extra) ? body.cargos_extra : [];
 
     const ep = await c.env.DB.prepare(
-      `SELECT id, paciente_id, estado FROM episodio_atencion WHERE id = ?`
+      `SELECT id, paciente_id, estado, alta_solicitada_en FROM episodio_atencion WHERE id = ?`
     )
       .bind(epId)
-      .first<{ id: number; paciente_id: number; estado: string }>();
+      .first<{ id: number; paciente_id: number; estado: string; alta_solicitada_en: string | null }>();
     if (!ep) return c.json({ error: "episodio_no_encontrado" }, 404);
     if (ep.estado !== "activo") return c.json({ error: "episodio_no_activo" }, 400);
+    if (!ep.alta_solicitada_en) return c.json({ error: "alta_no_solicitada", mensaje: "Enfermeria debe solicitar el alta antes de facturar" }, 400);
 
     // Egresar habitacion activa del paciente (libera cama y la vuelve facturable)
     await c.env.DB.prepare(

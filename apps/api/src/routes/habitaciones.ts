@@ -163,7 +163,7 @@ app.post(
 // Egresar (cierra ocupacion activa) — al hacerlo queda facturable
 app.post(
   "/ocupacion/:id/egresar",
-  requireRole("admin", "enfermeria", "medico", "facturacion"),
+  requireRole("admin", "facturacion"),
   async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     const o = await c.env.DB.prepare(`SELECT fecha_egreso FROM ocupacion_habitacion WHERE id = ?`)

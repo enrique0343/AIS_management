@@ -187,18 +187,6 @@ export default function Atencion() {
     } catch (e: any) { alert(e.message); }
   };
 
-  // === Egresar habitacion ===
-  const egresarHabitacion = async () => {
-    if (!sel?.ocupacion_id) return;
-    if (!confirm("Egresar de la habitacion? Quedara facturable.")) return;
-    await api.post(`/api/habitaciones/ocupacion/${sel.ocupacion_id}/egresar`, {});
-    refrescar();
-    // Recargar el paciente seleccionado
-    const r = await api.get<{ data: EnAtencion[] }>("/api/pacientes/_en-atencion");
-    const refreshed = r.data.find((p) => p.episodio_id === sel.episodio_id);
-    if (refreshed) setSel(refreshed);
-  };
-
   // === Alta / cierre ===
   const solicitarAlta = async () => {
     if (!sel) return;
@@ -206,29 +194,15 @@ export default function Atencion() {
     try {
       await api.post(`/api/pacientes/episodios/${sel.episodio_id}/solicitar-alta`, {});
       refrescar();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) {
+      alert(e.message ?? "Error al solicitar alta");
+    }
   };
 
   const cancelarAlta = async () => {
     if (!sel) return;
     await api.post(`/api/pacientes/episodios/${sel.episodio_id}/cancelar-alta`, {});
     refrescar();
-  };
-
-  const cerrarYFacturar = async () => {
-    if (!sel) return;
-    if (!confirm(`Cerrar cuenta de ${sel.nombres} ${sel.apellidos}?\nSe egresara la habitacion, se generara la factura interna y se cerrara el episodio.`)) return;
-    try {
-      const ivaStr = prompt("IVA % (0 si no aplica):", "13");
-      if (ivaStr === null) return;
-      const r = await api.post<any>(`/api/facturacion/episodios/${sel.episodio_id}/cerrar-y-facturar`, {
-        iva_pct: Number(ivaStr || 0), permitir_cero: true,
-      });
-      alert(`Cuenta cerrada. Factura ${r.numero} por $${Number(r.total).toFixed(2)}`);
-      setSel(null);
-      setEstado(null);
-      loadList();
-    } catch (e: any) { alert(e.message); }
   };
 
   return (
@@ -311,9 +285,6 @@ export default function Atencion() {
               </div>
               <div className="flex flex-col gap-2 items-end">
                 <button className="btn-secondary" onClick={() => { setSel(null); setEstado(null); }}>Volver</button>
-                {sel.habitacion && hasRole(user, "enfermeria", "medico", "facturacion") && (
-                  <button className="btn-danger text-xs" onClick={egresarHabitacion}>Egresar habitacion</button>
-                )}
               </div>
             </div>
           </div>
@@ -385,9 +356,6 @@ export default function Atencion() {
             )}
             {sel.alta_solicitada_en && hasRole(user, "enfermeria", "medico") && (
               <button className="btn-secondary" onClick={cancelarAlta}>Cancelar alta</button>
-            )}
-            {hasRole(user, "facturacion") && (
-              <button className="btn-danger" onClick={cerrarYFacturar}>Cerrar cuenta y facturar</button>
             )}
           </div>
         </div>

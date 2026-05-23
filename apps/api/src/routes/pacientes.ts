@@ -249,6 +249,28 @@ app.post(
       .first<{ estado: string }>();
     if (!ep) return c.json({ error: "no_encontrado" }, 404);
     if (ep.estado !== "activo") return c.json({ error: "episodio_no_activo" }, 400);
+
+    // Validar que no haya devoluciones pendientes
+    const devRow = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM devolucion_pendiente dp
+         JOIN consumo_paciente cp ON cp.id = dp.consumo_id
+        WHERE cp.episodio_id = ? AND dp.estado = 'pendiente'`
+    ).bind(id).first<{ n: number }>();
+    const devN = devRow?.n ?? 0;
+    if (devN > 0) {
+      return c.json({ error: "devoluciones_pendientes", mensaje: `Hay ${devN} devolucion(es) pendiente(s) de procesar en farmacia`, n: devN }, 400);
+    }
+
+    // Validar que no haya requisiciones activas
+    const reqRow = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM requisicion
+        WHERE episodio_id = ? AND estado IN ('pendiente', 'despachada_parcial')`
+    ).bind(id).first<{ n: number }>();
+    const reqN = reqRow?.n ?? 0;
+    if (reqN > 0) {
+      return c.json({ error: "requisiciones_activas", mensaje: `Hay ${reqN} requisicion(es) activa(s) sin completar`, n: reqN }, 400);
+    }
+
     await c.env.DB.prepare(
       `UPDATE episodio_atencion
           SET alta_solicitada_en = datetime('now'),
