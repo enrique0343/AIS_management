@@ -6,6 +6,26 @@ import { logAudit } from "../lib/audit";
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 app.use("*", requireAuth);
 
+app.get("/_en-atencion", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT DISTINCT p.id, p.expediente, p.nombres, p.apellidos,
+            e.id AS episodio_id, e.fecha_inicio, e.motivo,
+            e.alta_solicitada_en, e.estado AS episodio_estado,
+            e.medico_id AS medico_cabecera_id,
+            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = e.medico_id) AS medico_cabecera_nombre,
+            o.id AS ocupacion_id, h.numero AS habitacion, h.tipo AS habitacion_tipo,
+            o.fecha_ingreso AS habitacion_desde,
+            (SELECT COUNT(*) FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL) AS consumos_pend,
+            (SELECT codigo FROM cirugia WHERE paciente_id = p.id AND estado IN ('programada','en_curso') ORDER BY fecha_programada LIMIT 1) AS cirugia_proxima
+       FROM paciente p
+       JOIN episodio_atencion e ON e.paciente_id = p.id AND e.estado = 'activo'
+       LEFT JOIN ocupacion_habitacion o ON o.paciente_id = p.id AND o.fecha_egreso IS NULL
+       LEFT JOIN habitacion h ON h.id = o.habitacion_id
+      ORDER BY e.alta_solicitada_en IS NULL, e.fecha_inicio DESC`
+  ).all();
+  return c.json({ data: results });
+});
+
 app.get("/", async (c) => {
   const q = c.req.query("q") ?? "";
   const sql = q
@@ -258,24 +278,4 @@ app.post(
 
 // Pacientes "en atencion": episodio activo o habitacion activa.
 // Usado por la pagina /atencion (bedside).
-app.get("/_en-atencion", async (c) => {
-  const { results } = await c.env.DB.prepare(
-    `SELECT DISTINCT p.id, p.expediente, p.nombres, p.apellidos,
-            e.id AS episodio_id, e.fecha_inicio, e.motivo,
-            e.alta_solicitada_en, e.estado AS episodio_estado,
-            e.medico_id AS medico_cabecera_id,
-            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = e.medico_id) AS medico_cabecera_nombre,
-            o.id AS ocupacion_id, h.numero AS habitacion, h.tipo AS habitacion_tipo,
-            o.fecha_ingreso AS habitacion_desde,
-            (SELECT COUNT(*) FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL) AS consumos_pend,
-            (SELECT codigo FROM cirugia WHERE paciente_id = p.id AND estado IN ('programada','en_curso') ORDER BY fecha_programada LIMIT 1) AS cirugia_proxima
-       FROM paciente p
-       JOIN episodio_atencion e ON e.paciente_id = p.id AND e.estado = 'activo'
-       LEFT JOIN ocupacion_habitacion o ON o.paciente_id = p.id AND o.fecha_egreso IS NULL
-       LEFT JOIN habitacion h ON h.id = o.habitacion_id
-      ORDER BY e.alta_solicitada_en IS NULL, e.fecha_inicio DESC`
-  ).all();
-  return c.json({ data: results });
-});
-
 export default app;

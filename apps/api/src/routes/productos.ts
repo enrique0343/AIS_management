@@ -44,29 +44,8 @@ app.get("/", async (c) => {
   return c.json({ data: results });
 });
 
-app.get("/:id", async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
-  const p = await c.env.DB.prepare(`SELECT * FROM producto WHERE id = ?`).bind(id).first();
-  if (!p) return c.json({ error: "no_encontrado" }, 404);
-  const lotes = await c.env.DB.prepare(
-    `SELECT id, numero_lote, fecha_vencimiento, fecha_ingreso FROM lote WHERE producto_id = ? ORDER BY fecha_vencimiento`
-  )
-    .bind(id)
-    .all();
-  const existencias = await c.env.DB.prepare(
-    `SELECT e.id, e.area_id, a.nombre AS area, e.lote_id, l.numero_lote, l.fecha_vencimiento, e.cantidad
-       FROM existencia e
-       JOIN area a ON a.id = e.area_id
-       LEFT JOIN lote l ON l.id = e.lote_id
-      WHERE e.producto_id = ? AND e.cantidad > 0
-      ORDER BY a.nombre, l.fecha_vencimiento`
-  )
-    .bind(id)
-    .all();
-  return c.json({ producto: p, lotes: lotes.results, existencias: existencias.results });
-});
-
 // Sugiere el siguiente codigo para una categoria: PREFIJO-####
+// (definido ANTES que /:id para que Hono no lo capture como id)
 app.get("/_siguiente-codigo", async (c) => {
   const catId = parseInt(c.req.query("categoria_id") ?? "0", 10);
   if (!catId) return c.json({ error: "categoria_id_requerida" }, 400);
@@ -88,6 +67,28 @@ app.get("/_siguiente-codigo", async (c) => {
     prefijo: cat.prefijo,
     siguiente: `${cat.prefijo}-${String(next).padStart(4, "0")}`,
   });
+});
+
+app.get("/:id", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const p = await c.env.DB.prepare(`SELECT * FROM producto WHERE id = ?`).bind(id).first();
+  if (!p) return c.json({ error: "no_encontrado" }, 404);
+  const lotes = await c.env.DB.prepare(
+    `SELECT id, numero_lote, fecha_vencimiento, fecha_ingreso FROM lote WHERE producto_id = ? ORDER BY fecha_vencimiento`
+  )
+    .bind(id)
+    .all();
+  const existencias = await c.env.DB.prepare(
+    `SELECT e.id, e.area_id, a.nombre AS area, e.lote_id, l.numero_lote, l.fecha_vencimiento, e.cantidad
+       FROM existencia e
+       JOIN area a ON a.id = e.area_id
+       LEFT JOIN lote l ON l.id = e.lote_id
+      WHERE e.producto_id = ? AND e.cantidad > 0
+      ORDER BY a.nombre, l.fecha_vencimiento`
+  )
+    .bind(id)
+    .all();
+  return c.json({ producto: p, lotes: lotes.results, existencias: existencias.results });
 });
 
 app.post("/", requireRole("admin", "jefe_farmacia_central", "farmaceutico"), async (c) => {
