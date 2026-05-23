@@ -1,13 +1,8 @@
-import { argon2id, argon2Verify } from "hash-wasm";
 import type { Bindings, SessionData } from "../env";
 
-const ARGON_PARAMS = {
-  parallelism: 1,
-  iterations: 2,
-  memorySize: 19456, // 19 MiB - razonable para Workers
-  hashLength: 32,
-  outputType: "encoded" as const,
-};
+// PBKDF2 con WebCrypto nativo (Cloudflare Workers no permite WASM dinamico).
+// Formato del hash: "pbkdf2$<iterations>$<salt_hex>$<derived_hex>".
+const PBKDF2_ITERATIONS = 100000;
 
 function randomBytes(n: number): Uint8Array {
   const arr = new Uint8Array(n);
@@ -15,17 +10,50 @@ function randomBytes(n: number): Uint8Array {
   return arr;
 }
 
+function toHex(buf: ArrayBuffer | Uint8Array): string {
+  const b = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
+  return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+function fromHex(s: string): Uint8Array {
+  const out = new Uint8Array(s.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
+  return out;
+}
+
+async function deriveKey(password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
+  const km = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    { name: "PBKDF2" },
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+    km,
+    256
+  );
+  return new Uint8Array(bits);
+}
+
 export async function hashPassword(password: string): Promise<string> {
-  return argon2id({
-    password,
-    salt: randomBytes(16),
-    ...ARGON_PARAMS,
-  });
+  const salt = randomBytes(16);
+  const derived = await deriveKey(password, salt, PBKDF2_ITERATIONS);
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${toHex(salt)}$${toHex(derived)}`;
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   try {
-    return await argon2Verify({ password, hash });
+    const parts = hash.split("$");
+    if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
+    const iter = parseInt(parts[1], 10);
+    const salt = fromHex(parts[2]);
+    const expected = fromHex(parts[3]);
+    const got = await deriveKey(password, salt, iter);
+    if (got.length !== expected.length) return false;
+    let diff = 0;
+    for (let i = 0; i < got.length; i++) diff |= got[i] ^ expected[i];
+    return diff === 0;
   } catch {
     return false;
   }
