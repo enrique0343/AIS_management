@@ -38,24 +38,6 @@ jobs:
       - name: Build SPA into apps/api/public
         run: pnpm --filter @ais/api run build:web
 
-      - name: Seed migration tracking table
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        working-directory: apps/api
-        run: |
-          pnpm exec wrangler d1 execute ais_management --remote --yes \
-            --command "CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)"
-          pnpm exec wrangler d1 execute ais_management --remote --yes \
-            --command "INSERT OR IGNORE INTO d1_migrations(name) VALUES ('0001_init.sql'),('0002_remove_physical_controls.sql'),('0003_cirugia_consumo_area.sql'),('0004_habitaciones.sql'),('0005_categoria_prefijo.sql'),('0006_alta_y_gastos.sql'),('0007_cirugia_datetime.sql'),('0008_requisiciones.sql')"
-
-      - name: Apply D1 Migrations
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        working-directory: apps/api
-        run: pnpm exec wrangler d1 migrations apply ais_management --remote --yes
-
       - name: Deploy Worker
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
