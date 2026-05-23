@@ -163,11 +163,11 @@ export default function FacturaPrintDetalle() {
             </>
           )}
           <tr>
-            <td colSpan={3} className="text-right p-2">Subtotal neto</td>
+            <td colSpan={3} className="text-right p-2">Base s/IVA</td>
             <td className="text-right p-2">{Number(factura.subtotal).toFixed(2)}</td>
           </tr>
           <tr>
-            <td colSpan={3} className="text-right p-2">IVA</td>
+            <td colSpan={3} className="text-right p-2">IVA incluido</td>
             <td className="text-right p-2">{Number(factura.iva).toFixed(2)}</td>
           </tr>
           <tr className="font-bold text-base border-t-2 border-slate-900">

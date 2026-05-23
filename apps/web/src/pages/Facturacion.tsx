@@ -18,9 +18,16 @@ type ConsumoPend = {
   requiere_lote_vencimiento: number; es_servicio: number; area_id: number;
 };
 type LoteDisp = { id: number; numero_lote: string; fecha_vencimiento: string; stock_total: number };
+type ProductoLinea = {
+  producto_id: number | null; producto: string; codigo: string;
+  cantidad: number; precio_unitario: number; subtotal: number;
+};
 type ResumenCuenta = {
   episodio: any;
-  categorias: Array<{ categoria_id: number; categoria: string; subtotal: number; items: number }>;
+  categorias: Array<{
+    categoria_id: number; categoria: string; subtotal: number;
+    items: number; productos: ProductoLinea[];
+  }>;
   subtotal_consumos: number; subtotal_total: number;
 };
 type DescInput = { tipo: "pct" | "monto"; valor: string };
@@ -206,8 +213,11 @@ export default function Facturacion() {
     const subtotalBruto = subtotalCats + subtotalExtra;
     const descGlobalCalc = calcDescMonto(subtotalBruto, m.descGlobal);
     const subtotalNeto = subtotalBruto - descGlobalCalc;
-    const iva = subtotalNeto * m.ivaPct / 100;
-    return { subtotalBruto, descGlobalCalc, subtotalNeto, iva, total: subtotalNeto + iva };
+    // Extract IVA from inclusive prices
+    const total = +subtotalNeto.toFixed(2);
+    const subtotalBase = +(total / (1 + m.ivaPct / 100)).toFixed(2);
+    const iva = +(total - subtotalBase).toFixed(2);
+    return { subtotalBruto, descGlobalCalc, subtotalNeto, subtotalBase, iva, total };
   };
 
   return (
@@ -394,7 +404,18 @@ export default function Facturacion() {
                             <div className="font-medium text-sm">{cat.categoria}</div>
                             <div className="text-sm font-semibold">${Number(cat.subtotal).toFixed(2)}</div>
                           </div>
-                          <div className="text-xs text-slate-400 mb-1">{cat.items} item(s)</div>
+                          {cat.productos?.length > 0 && (
+                            <div className="mt-1 mb-2 space-y-0.5 pl-1 border-l-2 border-slate-200">
+                              {cat.productos.map((p, i) => (
+                                <div key={i} className="flex justify-between text-xs text-slate-500">
+                                  <span className="truncate max-w-[55%]">{p.producto}</span>
+                                  <span className="shrink-0 text-right">
+                                    {p.cantidad} × ${Number(p.precio_unitario).toFixed(2)} = <span className="font-medium text-slate-700">${Number(p.subtotal).toFixed(2)}</span>
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2">
                             <select
                               className="input text-xs w-20 py-1"
@@ -489,11 +510,11 @@ export default function Facturacion() {
                     </div>
                   </>
                 )}
-                <div className="flex justify-between">
-                  <span>Subtotal neto</span><span>${totales.subtotalNeto.toFixed(2)}</span>
+                <div className="flex justify-between text-slate-500">
+                  <span>Base s/IVA</span><span>${totales.subtotalBase.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between text-slate-500">
-                  <span>IVA ({m.ivaPct}%)</span><span>${totales.iva.toFixed(2)}</span>
+                  <span>IVA incluido ({m.ivaPct}%)</span><span>${totales.iva.toFixed(2)}</span>
                 </div>
                 <div className="flex justify-between font-bold text-base border-t pt-1 mt-1">
                   <span>Total</span><span>${totales.total.toFixed(2)}</span>

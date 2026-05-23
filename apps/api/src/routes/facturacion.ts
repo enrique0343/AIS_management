@@ -66,15 +66,17 @@ app.post("/facturas", requireRole("admin", "facturacion"), async (c) => {
   for (const c0 of consumos.results ?? []) subtotal += c0.cantidad * c0.precio_venta_snapshot;
   for (const o of ocupaciones.results ?? []) subtotal += o.dias * o.precio_diario_snapshot;
   for (const e of cargosExtra) subtotal += e.cantidad * e.precio_unitario;
-  const iva = +(subtotal * (ivaPct / 100)).toFixed(2);
-  const total = +(subtotal + iva).toFixed(2);
+  // Prices include IVA — extract base and tax from inclusive total
+  const total = +subtotal.toFixed(2);
+  const subtotalBase = +(total / (1 + ivaPct / 100)).toFixed(2);
+  const iva = +(total - subtotalBase).toFixed(2);
   const numero = `F-${Date.now()}`;
 
   const f = await c.env.DB.prepare(
     `INSERT INTO factura (numero, paciente_id, episodio_id, subtotal, iva, total, usuario_id)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(numero, ep.paciente_id, ep.id, subtotal, iva, total, c.get("session")!.usuario_id)
+    .bind(numero, ep.paciente_id, ep.id, subtotalBase, iva, total, c.get("session")!.usuario_id)
     .run();
   const facturaId = f.meta.last_row_id as number;
 
@@ -126,7 +128,7 @@ app.post("/facturas", requireRole("admin", "facturacion"), async (c) => {
     ip: c.get("ip"),
   });
 
-  return c.json({ id: facturaId, numero, subtotal, iva, total });
+  return c.json({ id: facturaId, numero, subtotal: subtotalBase, iva, total });
 });
 
 app.get("/facturas", async (c) => {
@@ -247,37 +249,91 @@ app.get("/episodios/:id/resumen-cuenta", requireRole("admin", "facturacion"), as
        LEFT JOIN profesional_medico pm ON pm.id = e.medico_id
       WHERE e.id = ?`
   ).bind(id).first();
-  const { results: categorias } = await c.env.DB.prepare(
+
+  // Product lines consolidated by (producto_id, precio) per category
+  const { results: lineas } = await c.env.DB.prepare(
     `SELECT cat.id AS categoria_id, cat.nombre AS categoria,
-            ROUND(SUM(cp.precio_venta_snapshot * cp.cantidad), 2) AS subtotal,
-            COUNT(*) AS items
+            cp.producto_id, p.nombre AS producto, p.codigo,
+            cp.precio_venta_snapshot AS precio_unitario,
+            SUM(cp.cantidad) AS cantidad,
+            ROUND(SUM(cp.cantidad * cp.precio_venta_snapshot), 2) AS subtotal
        FROM consumo_paciente cp
        JOIN producto p ON p.id = cp.producto_id
        JOIN categoria_producto cat ON cat.id = p.categoria_id
       WHERE cp.episodio_id = ? AND cp.factura_detalle_id IS NULL
-      GROUP BY cat.id, cat.nombre
-      ORDER BY cat.nombre`
-  ).bind(id).all();
-  const habRow = await c.env.DB.prepare(
-    `SELECT ROUND(COALESCE(SUM(
-       MAX(CAST((julianday(COALESCE(oh.fecha_egreso,datetime('now')))-julianday(oh.fecha_ingreso)) AS INTEGER),1)
-       * oh.precio_diario_snapshot
-     ),0),2) AS subtotal, COUNT(*) AS registros
-       FROM ocupacion_habitacion oh
-      WHERE oh.episodio_id = ? AND oh.factura_detalle_id IS NULL`
-  ).bind(id).first<{ subtotal: number; registros: number }>();
-  const subtotalConsumos = (categorias as any[]).reduce((s: number, c: any) => s + Number(c.subtotal), 0);
-  const allCategorias = [
-    ...(categorias as any[]),
-    ...(Number(habRow?.subtotal ?? 0) > 0
-      ? [{ categoria_id: -1, categoria: "Habitacion", subtotal: Number(habRow!.subtotal), items: habRow!.registros }]
-      : []),
-  ];
+      GROUP BY cat.id, cat.nombre, cp.producto_id, cp.precio_venta_snapshot
+      ORDER BY cat.nombre, p.nombre`
+  ).bind(id).all<{
+    categoria_id: number; categoria: string;
+    producto_id: number; producto: string; codigo: string;
+    precio_unitario: number; cantidad: number; subtotal: number;
+  }>();
+
+  type ProductoLinea = {
+    producto_id: number | null; producto: string; codigo: string;
+    cantidad: number; precio_unitario: number; subtotal: number;
+  };
+  type CatEntry = {
+    categoria_id: number; categoria: string; subtotal: number;
+    items: number; productos: ProductoLinea[];
+  };
+  const catMap = new Map<number, CatEntry>();
+  for (const linea of lineas.results ?? []) {
+    const prev = catMap.get(linea.categoria_id) ?? {
+      categoria_id: linea.categoria_id, categoria: linea.categoria,
+      subtotal: 0, items: 0, productos: [],
+    };
+    prev.subtotal = +(prev.subtotal + Number(linea.subtotal)).toFixed(2);
+    prev.items += 1;
+    prev.productos.push({
+      producto_id: linea.producto_id, producto: linea.producto, codigo: linea.codigo,
+      cantidad: Number(linea.cantidad), precio_unitario: Number(linea.precio_unitario),
+      subtotal: Number(linea.subtotal),
+    });
+    catMap.set(linea.categoria_id, prev);
+  }
+
+  // Habitacion lines
+  const { results: habLineas } = await c.env.DB.prepare(
+    `SELECT h.numero AS habitacion, h.tipo AS habitacion_tipo,
+            o.precio_diario_snapshot,
+            MAX(CAST((julianday(COALESCE(o.fecha_egreso,datetime('now')))-julianday(o.fecha_ingreso)) AS INTEGER),1) AS dias
+       FROM ocupacion_habitacion o
+       JOIN habitacion h ON h.id = o.habitacion_id
+      WHERE o.episodio_id = ? AND o.factura_detalle_id IS NULL
+      ORDER BY o.fecha_ingreso`
+  ).bind(id).all<{ habitacion: string; habitacion_tipo: string; precio_diario_snapshot: number; dias: number }>();
+
+  let habitacionSubtotal = 0;
+  const habProductos: ProductoLinea[] = [];
+  for (const o of habLineas.results ?? []) {
+    const sub = +(o.dias * o.precio_diario_snapshot).toFixed(2);
+    habitacionSubtotal += sub;
+    habProductos.push({
+      producto_id: null,
+      producto: `Habitacion ${o.habitacion} (${o.habitacion_tipo})`,
+      codigo: "",
+      cantidad: Number(o.dias),
+      precio_unitario: Number(o.precio_diario_snapshot),
+      subtotal: sub,
+    });
+  }
+
+  const categorias = [...catMap.values()].sort((a, b) => a.categoria.localeCompare(b.categoria));
+  if (habitacionSubtotal > 0) {
+    categorias.push({
+      categoria_id: -1, categoria: "Habitacion",
+      subtotal: +habitacionSubtotal.toFixed(2),
+      items: habProductos.length, productos: habProductos,
+    });
+  }
+
+  const subtotalConsumos = categorias.filter((c) => c.categoria_id !== -1).reduce((s, c) => s + c.subtotal, 0);
   return c.json({
     episodio: epInfo,
-    categorias: allCategorias,
+    categorias,
     subtotal_consumos: +subtotalConsumos.toFixed(2),
-    subtotal_total: +(subtotalConsumos + Number(habRow?.subtotal ?? 0)).toFixed(2),
+    subtotal_total: +(subtotalConsumos + habitacionSubtotal).toFixed(2),
   });
 });
 
@@ -424,15 +480,17 @@ app.post(
       return c.json({ error: "nada_para_facturar", hint: "use permitir_cero=true para cerrar sin cargos" }, 400);
     }
 
-    const iva = +(subtotalNeto * (ivaPct / 100)).toFixed(2);
-    const total = +(subtotalNeto + iva).toFixed(2);
+    // Prices include IVA — extract base and tax from inclusive total
+    const total = +subtotalNeto.toFixed(2);
+    const subtotalBase = +(total / (1 + ivaPct / 100)).toFixed(2);
+    const iva = +(total - subtotalBase).toFixed(2);
     const numero = `F-${Date.now()}`;
 
     const f = await c.env.DB.prepare(
       `INSERT INTO factura (numero, paciente_id, episodio_id, subtotal, iva, total, usuario_id, observaciones)
        VALUES (?, ?, ?, ?, ?, ?, ?, 'Cierre de cuenta - alta')`
     )
-      .bind(numero, ep.paciente_id, ep.id, subtotalNeto, iva, total, c.get("session")!.usuario_id)
+      .bind(numero, ep.paciente_id, ep.id, subtotalBase, iva, total, c.get("session")!.usuario_id)
       .run();
     const facturaId = f.meta.last_row_id as number;
 
@@ -504,7 +562,7 @@ app.post(
       ip: c.get("ip"),
     });
 
-    return c.json({ ok: true, factura_id: facturaId, numero, subtotal: subtotalNeto, iva, total });
+    return c.json({ ok: true, factura_id: facturaId, numero, subtotal: subtotalBase, iva, total });
   }
 );
 
