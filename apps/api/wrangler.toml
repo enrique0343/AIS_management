@@ -4,25 +4,18 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
 [vars]
-APP_ENV = "dev"
+APP_ENV = "production"
 SESSION_TTL_SECONDS = "28800"
-
-# Bindings — IDs deben configurarse antes del primer deploy:
-#   npx wrangler d1 create ais_management
-#   npx wrangler kv namespace create SESSIONS
-#   npx wrangler r2 bucket create ais-docs
-#
-# Luego reemplaza los placeholders por los IDs reales.
 
 [[d1_databases]]
 binding = "DB"
 database_name = "ais_management"
-database_id = "REPLACE_WITH_D1_ID"
+database_id = "cbc5a57a-cafa-4f26-b8c2-8e535c433e48"
 migrations_dir = "migrations"
 
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "REPLACE_WITH_KV_ID"
+id = "a207f2115d374319bbbefe3378ef2dc1"
 
 [[r2_buckets]]
 binding = "DOCS"
