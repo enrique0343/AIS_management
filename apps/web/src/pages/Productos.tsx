@@ -164,9 +164,31 @@ export default function Productos() {
               <input type="checkbox" checked={form.es_controlado} onChange={(e) => setForm({ ...form, es_controlado: e.target.checked, requiere_receta_especial: e.target.checked })} />
               Producto controlado (SRS)
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              <input className="input" type="number" step="0.01" placeholder="Precio venta" value={form.precio_venta} onChange={(e) => setForm({ ...form, precio_venta: e.target.value })} />
-              <input className="input" type="number" step="0.01" placeholder="Punto reorden" value={form.punto_reorden} onChange={(e) => setForm({ ...form, punto_reorden: e.target.value })} />
+
+            <div className="pt-2 border-t">
+              <h3 className="text-sm font-semibold mb-2">Costos y precio</h3>
+
+              <div className="bg-slate-50 rounded p-2 mb-2">
+                <label className="text-xs font-medium text-slate-700">Costo unitario (CPP) - automatico</label>
+                <input className="input bg-white" type="text" disabled value="Se calcula automaticamente al recibir compras" />
+                <p className="text-xs text-slate-500 mt-1">
+                  El costo se mantiene como promedio ponderado de las compras recibidas
+                  (no se ingresa manualmente).
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium text-slate-700">Precio de venta ($) *</label>
+                  <input className="input" type="number" step="0.01" min="0" value={form.precio_venta} onChange={(e) => setForm({ ...form, precio_venta: e.target.value })} />
+                  <p className="text-xs text-slate-500">Lo que se cobra al paciente.</p>
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-slate-700">Punto de reorden</label>
+                  <input className="input" type="number" step="0.01" min="0" value={form.punto_reorden} onChange={(e) => setForm({ ...form, punto_reorden: e.target.value })} />
+                  <p className="text-xs text-slate-500">Stock minimo antes de sugerir OC.</p>
+                </div>
+              </div>
             </div>
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => { setShow(false); setEditId(null); }}>Cancelar</button>

@@ -4,6 +4,7 @@ import { useAuth, hasRole } from "../lib/auth";
 const menu = [
   { to: "/", label: "Inicio", roles: [] },
   { to: "/atencion", label: "Atencion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
+  { to: "/hospitalizacion", label: "Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
   { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"] },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"] },
   { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"] },

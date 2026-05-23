@@ -96,6 +96,27 @@ app.post(
       .bind(b.paciente_id)
       .run();
 
+    // Si no se especifica episodio_id, usar el activo del paciente o crear uno.
+    // Asignar habitacion = hospitalizar; no requiere cargos previos.
+    let episodioId: number | null = b.episodio_id ?? null;
+    if (!episodioId) {
+      const epActivo = await c.env.DB.prepare(
+        `SELECT id FROM episodio_atencion WHERE paciente_id = ? AND estado = 'activo' ORDER BY id DESC LIMIT 1`
+      )
+        .bind(b.paciente_id)
+        .first<{ id: number }>();
+      if (epActivo) {
+        episodioId = epActivo.id;
+      } else {
+        const ep = await c.env.DB.prepare(
+          `INSERT INTO episodio_atencion (paciente_id, motivo) VALUES (?, ?)`
+        )
+          .bind(b.paciente_id, b.motivo ?? "Hospitalizacion")
+          .run();
+        episodioId = ep.meta.last_row_id as number;
+      }
+    }
+
     const r = await c.env.DB.prepare(
       `INSERT INTO ocupacion_habitacion
          (paciente_id, episodio_id, habitacion_id, precio_diario_snapshot, usuario_id, observaciones)
@@ -103,7 +124,7 @@ app.post(
     )
       .bind(
         b.paciente_id,
-        b.episodio_id ?? null,
+        episodioId,
         b.habitacion_id,
         hab.precio_diario,
         c.get("session")!.usuario_id,
@@ -148,6 +169,26 @@ app.post(
     return c.json({ ok: true });
   }
 );
+
+// Pacientes hospitalizados (todas las ocupaciones activas)
+app.get("/_hospitalizados", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT o.id AS ocupacion_id, o.fecha_ingreso, o.precio_diario_snapshot,
+            o.episodio_id, o.observaciones,
+            p.id AS paciente_id, p.expediente, p.nombres, p.apellidos,
+            p.documento_tipo, p.documento_numero, p.telefono,
+            h.id AS habitacion_id, h.numero AS habitacion, h.tipo AS habitacion_tipo,
+            MAX(CAST((julianday('now') - julianday(o.fecha_ingreso)) AS INTEGER), 1) AS dias_estancia,
+            e.alta_solicitada_en
+       FROM ocupacion_habitacion o
+       JOIN paciente p ON p.id = o.paciente_id
+       JOIN habitacion h ON h.id = o.habitacion_id
+       LEFT JOIN episodio_atencion e ON e.id = o.episodio_id
+      WHERE o.fecha_egreso IS NULL
+      ORDER BY o.fecha_ingreso DESC`
+  ).all();
+  return c.json({ data: results });
+});
 
 // Ocupaciones de un paciente (historial)
 app.get("/paciente/:pid", async (c) => {

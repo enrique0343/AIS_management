@@ -31,17 +31,25 @@ app.get("/cirugias", async (c) => {
   const quirofanoId = c.req.query("quirofano_id");
   const filt: string[] = ["1=1"];
   const binds: unknown[] = [];
-  if (desde) { filt.push("date(c.fecha_programada) >= ?"); binds.push(desde); }
-  if (hasta) { filt.push("date(c.fecha_programada) <= ?"); binds.push(hasta); }
+  if (desde) { filt.push("date(COALESCE(c.inicio_at, c.fecha_programada)) >= ?"); binds.push(desde); }
+  if (hasta) { filt.push("date(COALESCE(c.inicio_at, c.fecha_programada)) <= ?"); binds.push(hasta); }
   if (quirofanoId) { filt.push("c.quirofano_id = ?"); binds.push(parseInt(quirofanoId, 10)); }
   const { results } = await c.env.DB.prepare(
-    `SELECT c.*, q.nombre AS quirofano,
-            COALESCE(p.nombres || ' ' || p.apellidos, c.paciente_pendiente_nombre) AS paciente_nombre
+    `SELECT c.id, c.codigo, c.fecha_programada, c.hora_inicio, c.hora_fin,
+            c.inicio_at, c.fin_at, c.quirofano_id, c.paciente_id,
+            c.paciente_pendiente_nombre, c.tipo_cirugia, c.estado, c.observaciones,
+            c.medico_principal_id, c.cirujano_ayudante_id, c.anestesiologo_id,
+            c.enfermera_circulante_id, c.enfermera_instrumentista_id,
+            q.nombre AS quirofano,
+            COALESCE(p.nombres || ' ' || p.apellidos, c.paciente_pendiente_nombre) AS paciente_nombre,
+            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = c.medico_principal_id) AS cirujano_nombre,
+            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = c.cirujano_ayudante_id) AS ayudante_nombre,
+            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = c.anestesiologo_id) AS anestesiologo_nombre
        FROM cirugia c
        JOIN quirofano q ON q.id = c.quirofano_id
        LEFT JOIN paciente p ON p.id = c.paciente_id
       WHERE ${filt.join(" AND ")}
-      ORDER BY c.fecha_programada, c.hora_inicio`
+      ORDER BY COALESCE(c.inicio_at, c.fecha_programada), c.hora_inicio`
   )
     .bind(...binds)
     .all();
@@ -53,40 +61,55 @@ app.post(
   requireRole("admin", "programador_quirofano", "medico"),
   async (c) => {
     const b = await c.req.json().catch(() => null);
-    if (!b?.quirofano_id || !b?.fecha_programada) return c.json({ error: "datos_invalidos" }, 400);
-
-    // Validar traslape simple por quirofano (mismo dia, rango horas)
-    if (b.hora_inicio && b.hora_fin) {
-      const tras = await c.env.DB.prepare(
-        `SELECT id FROM cirugia
-          WHERE quirofano_id = ?
-            AND date(fecha_programada) = date(?)
-            AND estado IN ('programada','en_curso')
-            AND NOT (time(hora_fin) <= time(?) OR time(hora_inicio) >= time(?))`
-      )
-        .bind(b.quirofano_id, b.fecha_programada, b.hora_inicio, b.hora_fin)
-        .first();
-      if (tras) return c.json({ error: "traslape_quirofano" }, 400);
+    if (!b?.quirofano_id || !b?.inicio_at || !b?.fin_at) {
+      return c.json({ error: "datos_invalidos", detalle: "quirofano_id, inicio_at, fin_at requeridos" }, 400);
+    }
+    if (b.fin_at <= b.inicio_at) {
+      return c.json({ error: "fin_debe_ser_posterior_a_inicio" }, 400);
+    }
+    if (!b.medico_principal_id) {
+      return c.json({ error: "cirujano_requerido" }, 400);
     }
 
+    // Validar traslape por rango datetime completo (soporta cruzar medianoche)
+    const tras = await c.env.DB.prepare(
+      `SELECT id FROM cirugia
+        WHERE quirofano_id = ?
+          AND estado IN ('programada','en_curso')
+          AND inicio_at IS NOT NULL AND fin_at IS NOT NULL
+          AND NOT (datetime(fin_at) <= datetime(?) OR datetime(inicio_at) >= datetime(?))`
+    )
+      .bind(b.quirofano_id, b.inicio_at, b.fin_at)
+      .first();
+    if (tras) return c.json({ error: "traslape_quirofano" }, 400);
+
     const codigo = b.codigo ?? `CIR-${Date.now()}`;
+    // Derivar fecha_programada / hora_inicio / hora_fin para compat
+    const fechaProg = String(b.inicio_at).slice(0, 10);
+    const horaIni = String(b.inicio_at).slice(11, 16);
+    const horaFin = String(b.fin_at).slice(11, 16);
+
     const r = await c.env.DB.prepare(
       `INSERT INTO cirugia
-         (codigo, fecha_programada, hora_inicio, hora_fin, quirofano_id, paciente_id,
-          paciente_pendiente_nombre, tipo_cirugia, medico_principal_id, anestesiologo_id,
+         (codigo, fecha_programada, hora_inicio, hora_fin, inicio_at, fin_at,
+          quirofano_id, paciente_id, paciente_pendiente_nombre, tipo_cirugia,
+          medico_principal_id, cirujano_ayudante_id, anestesiologo_id,
           enfermera_circulante_id, enfermera_instrumentista_id, observaciones)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         codigo,
-        b.fecha_programada,
-        b.hora_inicio ?? null,
-        b.hora_fin ?? null,
+        fechaProg,
+        horaIni,
+        horaFin,
+        b.inicio_at,
+        b.fin_at,
         b.quirofano_id,
         b.paciente_id ?? null,
         b.paciente_pendiente_nombre ?? null,
         b.tipo_cirugia ?? null,
-        b.medico_principal_id ?? null,
+        b.medico_principal_id,
+        b.cirujano_ayudante_id ?? null,
         b.anestesiologo_id ?? null,
         b.enfermera_circulante_id ?? null,
         b.enfermera_instrumentista_id ?? null,

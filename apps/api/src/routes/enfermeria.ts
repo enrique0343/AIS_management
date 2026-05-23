@@ -122,6 +122,100 @@ app.post("/consumos", requireRole("admin", "enfermeria", "medico", "farmaceutico
   return c.json({ ok: true, consumos: insertedIds });
 });
 
+// Devolucion de producto no utilizado a la farmacia interna.
+// Solo aplica a consumos de productos (no servicios) que aun no estan facturados.
+// Reduce la cantidad del consumo y reingresa al stock del area destino con el
+// mismo lote (preserva trazabilidad de vencimiento).
+app.post(
+  "/consumos/:id/devolucion",
+  requireRole("admin", "enfermeria", "medico", "farmaceutico"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const b = await c.req.json().catch(() => null);
+    if (!b?.cantidad || !b?.area_destino_id) {
+      return c.json({ error: "datos_invalidos", detalle: "cantidad y area_destino_id requeridos" }, 400);
+    }
+    const cantDev = Number(b.cantidad);
+
+    const cp = await c.env.DB.prepare(
+      `SELECT cp.id, cp.cantidad, cp.producto_id, cp.lote_id, cp.area_id,
+              cp.costo_unitario_snapshot, cp.factura_detalle_id,
+              cat.es_servicio, p.nombre AS producto
+         FROM consumo_paciente cp
+         JOIN producto p ON p.id = cp.producto_id
+         JOIN categoria_producto cat ON cat.id = p.categoria_id
+        WHERE cp.id = ?`
+    )
+      .bind(id)
+      .first<{
+        id: number; cantidad: number; producto_id: number; lote_id: number | null;
+        area_id: number; costo_unitario_snapshot: number; factura_detalle_id: number | null;
+        es_servicio: number; producto: string;
+      }>();
+    if (!cp) return c.json({ error: "consumo_no_encontrado" }, 404);
+    if (cp.factura_detalle_id) return c.json({ error: "consumo_ya_facturado_no_puede_devolverse" }, 400);
+    if (cp.es_servicio === 1) return c.json({ error: "servicios_no_se_pueden_devolver" }, 400);
+    if (cantDev <= 0 || cantDev > cp.cantidad) {
+      return c.json({ error: "cantidad_invalida", maximo_disponible: cp.cantidad }, 400);
+    }
+
+    // Reducir el consumo
+    await c.env.DB.prepare(`UPDATE consumo_paciente SET cantidad = cantidad - ? WHERE id = ?`)
+      .bind(cantDev, id)
+      .run();
+
+    // Sumar al area destino (farmacia interna que custodia) preservando lote
+    const ex = await c.env.DB.prepare(
+      `SELECT id FROM existencia
+        WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+    )
+      .bind(cp.producto_id, b.area_destino_id, cp.lote_id)
+      .first<{ id: number }>();
+    if (ex) {
+      await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ?`)
+        .bind(cantDev, ex.id)
+        .run();
+    } else {
+      await c.env.DB.prepare(
+        `INSERT INTO existencia (producto_id, area_id, lote_id, cantidad) VALUES (?, ?, ?, ?)`
+      )
+        .bind(cp.producto_id, b.area_destino_id, cp.lote_id, cantDev)
+        .run();
+    }
+
+    // Movimiento de inventario tipo 'devolucion'
+    await c.env.DB.prepare(
+      `INSERT INTO movimiento_inventario
+         (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad,
+          costo_unitario, usuario_id, referencia_tipo, referencia_id, observaciones)
+       VALUES ('devolucion', ?, ?, ?, ?, ?, ?, ?, 'consumo', ?, ?)`
+    )
+      .bind(
+        cp.producto_id,
+        cp.lote_id,
+        cp.area_id,
+        b.area_destino_id,
+        cantDev,
+        cp.costo_unitario_snapshot,
+        c.get("session")!.usuario_id,
+        id,
+        b.observaciones ?? `Devolucion de ${cp.producto} no utilizado`
+      )
+      .run();
+
+    await logAudit(c.env, {
+      usuario_id: c.get("session")!.usuario_id,
+      accion: "devolucion_consumo",
+      entidad: "consumo_paciente",
+      entidad_id: id,
+      payload: { cantidad: cantDev, area_destino_id: b.area_destino_id },
+      ip: c.get("ip"),
+    });
+
+    return c.json({ ok: true });
+  }
+);
+
 app.get("/consumos", async (c) => {
   const episodioId = c.req.query("episodio_id");
   if (!episodioId) return c.json({ error: "episodio_id_requerido" }, 400);

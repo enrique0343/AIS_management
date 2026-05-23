@@ -7,11 +7,16 @@ type Cir = {
   fecha_programada: string;
   hora_inicio: string | null;
   hora_fin: string | null;
+  inicio_at: string | null;
+  fin_at: string | null;
   quirofano: string;
   paciente_id: number | null;
   paciente_nombre: string | null;
   tipo_cirugia: string | null;
   estado: string;
+  cirujano_nombre: string | null;
+  ayudante_nombre: string | null;
+  anestesiologo_nombre: string | null;
 };
 
 type Q = { id: number; nombre: string };
@@ -56,17 +61,24 @@ export default function Quirofano() {
   const [quirofanos, setQuirofanos] = useState<Q[]>([]);
   const [prods, setProds] = useState<Prod[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
+  const [pacientes, setPacientes] = useState<any[]>([]);
+  const [medicos, setMedicos] = useState<any[]>([]);
   const [consumosCir, setConsumosCir] = useState<{ cirugia: Cir; lista: ConsumoCir[] } | null>(null);
   const [cForm, setCForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1 });
   const [show, setShow] = useState(false);
-  const [form, setForm] = useState<any>({
+  const blankCirugia = {
     quirofano_id: "",
-    fecha_programada: "",
-    hora_inicio: "",
-    hora_fin: "",
+    inicio_at: "",
+    fin_at: "",
+    paciente_id: "",
     paciente_pendiente_nombre: "",
     tipo_cirugia: "",
-  });
+    medico_principal_id: "",
+    cirujano_ayudante_id: "",
+    anestesiologo_id: "",
+    observaciones: "",
+  };
+  const [form, setForm] = useState<any>(blankCirugia);
 
   const [vista, setVista] = useState<"tabla" | "calendario">("calendario");
   const [semanaBase, setSemanaBase] = useState<Date>(() => {
@@ -95,6 +107,8 @@ export default function Quirofano() {
     api.get<{ data: Q[] }>("/api/quirofano/quirofanos").then((r) => setQuirofanos(r.data));
     api.get<{ data: Prod[] }>("/api/productos").then((r) => setProds(r.data));
     api.get<{ data: Area[] }>("/api/catalogos/areas").then((r) => setAreas(r.data));
+    api.get<{ data: any[] }>("/api/pacientes").then((r) => setPacientes(r.data));
+    api.get<{ data: any[] }>("/api/profesionales/medicos").then((r) => setMedicos(r.data));
   }, []);
 
   const estadoColor: Record<string, string> = {
@@ -126,13 +140,31 @@ export default function Quirofano() {
   };
 
   const submit = async () => {
-    await api.post("/api/quirofano/cirugias", {
-      ...form,
-      quirofano_id: Number(form.quirofano_id),
-    });
-    setShow(false);
-    setForm({ quirofano_id: "", fecha_programada: "", hora_inicio: "", hora_fin: "", paciente_pendiente_nombre: "", tipo_cirugia: "" });
-    load();
+    if (!form.quirofano_id || !form.inicio_at || !form.fin_at || !form.medico_principal_id) {
+      alert("Quirofano, inicio, fin y cirujano son obligatorios");
+      return;
+    }
+    if (form.fin_at <= form.inicio_at) {
+      alert("La hora de fin debe ser posterior a la de inicio");
+      return;
+    }
+    try {
+      await api.post("/api/quirofano/cirugias", {
+        quirofano_id: Number(form.quirofano_id),
+        inicio_at: form.inicio_at,
+        fin_at: form.fin_at,
+        paciente_id: form.paciente_id ? Number(form.paciente_id) : null,
+        paciente_pendiente_nombre: form.paciente_id ? null : (form.paciente_pendiente_nombre || null),
+        tipo_cirugia: form.tipo_cirugia || null,
+        medico_principal_id: Number(form.medico_principal_id),
+        cirujano_ayudante_id: form.cirujano_ayudante_id ? Number(form.cirujano_ayudante_id) : null,
+        anestesiologo_id: form.anestesiologo_id ? Number(form.anestesiologo_id) : null,
+        observaciones: form.observaciones || null,
+      });
+      setShow(false);
+      setForm(blankCirugia);
+      load();
+    } catch (e: any) { alert(e.message); }
   };
 
   const asociar = async (id: number) => {
@@ -193,17 +225,22 @@ export default function Quirofano() {
       <div className="card overflow-auto">
         <table className="table">
           <thead>
-            <tr><th>Codigo</th><th>Fecha</th><th>Hora</th><th>Quirofano</th><th>Paciente</th><th>Tipo</th><th>Estado</th><th></th></tr>
+            <tr><th>Codigo</th><th>Inicio</th><th>Fin</th><th>Quirofano</th><th>Paciente</th><th>Tipo</th><th>Equipo medico</th><th>Estado</th><th></th></tr>
           </thead>
           <tbody>
             {cirugias.map((c) => (
               <tr key={c.id}>
                 <td>{c.codigo}</td>
-                <td>{c.fecha_programada}</td>
-                <td>{c.hora_inicio ?? "-"} / {c.hora_fin ?? "-"}</td>
+                <td className="text-xs whitespace-nowrap">{c.inicio_at ? c.inicio_at.replace("T", " ") : (c.fecha_programada + " " + (c.hora_inicio ?? "-"))}</td>
+                <td className="text-xs whitespace-nowrap">{c.fin_at ? c.fin_at.replace("T", " ") : (c.fecha_programada + " " + (c.hora_fin ?? "-"))}</td>
                 <td>{c.quirofano}</td>
                 <td>{c.paciente_nombre ?? <span className="text-orange-600">SIN ASOCIAR</span>}</td>
                 <td>{c.tipo_cirugia ?? "-"}</td>
+                <td className="text-xs">
+                  {c.cirujano_nombre && <div><span className="text-slate-500">Cirujano:</span> {c.cirujano_nombre}</div>}
+                  {c.ayudante_nombre && <div><span className="text-slate-500">Ayudante:</span> {c.ayudante_nombre}</div>}
+                  {c.anestesiologo_nombre && <div><span className="text-slate-500">Anest.:</span> {c.anestesiologo_nombre}</div>}
+                </td>
                 <td>{c.estado}</td>
                 <td className="space-x-1">
                   {!c.paciente_id && <button className="btn-secondary text-xs" onClick={() => asociar(c.id)}>Asociar</button>}
@@ -259,21 +296,85 @@ export default function Quirofano() {
 
       {show && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="card w-full max-w-lg space-y-3">
-            <h2 className="font-semibold">Programar cirugia</h2>
-            <select className="input" value={form.quirofano_id} onChange={(e) => setForm({ ...form, quirofano_id: e.target.value })}>
-              <option value="">-- Quirofano --</option>
-              {quirofanos.map((q) => <option key={q.id} value={q.id}>{q.nombre}</option>)}
-            </select>
-            <input className="input" type="date" value={form.fecha_programada} onChange={(e) => setForm({ ...form, fecha_programada: e.target.value })} />
-            <div className="grid grid-cols-2 gap-2">
-              <input className="input" type="time" value={form.hora_inicio} onChange={(e) => setForm({ ...form, hora_inicio: e.target.value })} />
-              <input className="input" type="time" value={form.hora_fin} onChange={(e) => setForm({ ...form, hora_fin: e.target.value })} />
+          <div className="card w-full max-w-xl space-y-3 max-h-[90vh] overflow-auto">
+            <h2 className="font-semibold text-lg">Programar cirugia</h2>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Quirofano *</label>
+              <select className="input" value={form.quirofano_id} onChange={(e) => setForm({ ...form, quirofano_id: e.target.value })}>
+                <option value="">-- Seleccionar --</option>
+                {quirofanos.map((q) => <option key={q.id} value={q.id}>{q.nombre}</option>)}
+              </select>
             </div>
-            <input className="input" placeholder="Nombre paciente (si no esta registrado)" value={form.paciente_pendiente_nombre} onChange={(e) => setForm({ ...form, paciente_pendiente_nombre: e.target.value })} />
-            <input className="input" placeholder="Tipo de cirugia" value={form.tipo_cirugia} onChange={(e) => setForm({ ...form, tipo_cirugia: e.target.value })} />
-            <div className="flex justify-end gap-2">
-              <button className="btn-secondary" onClick={() => setShow(false)}>Cancelar</button>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-medium text-slate-700">Inicio (fecha y hora, 24h) *</label>
+                <input className="input" type="datetime-local" step="60" value={form.inicio_at} onChange={(e) => setForm({ ...form, inicio_at: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-slate-700">Fin (fecha y hora, 24h) *</label>
+                <input className="input" type="datetime-local" step="60" value={form.fin_at} onChange={(e) => setForm({ ...form, fin_at: e.target.value })} />
+              </div>
+            </div>
+            <p className="text-xs text-slate-500 -mt-2">Soporta cirugias que cruzan medianoche (ej. inicio 23:00 - fin 02:00 del dia siguiente).</p>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Paciente (de la lista de pacientes registrados)</label>
+              <select className="input" value={form.paciente_id} onChange={(e) => setForm({ ...form, paciente_id: e.target.value })}>
+                <option value="">-- Sin asignar (asociar despues) --</option>
+                {pacientes.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.expediente} - {p.nombres} {p.apellidos}
+                    {p.documento_numero ? ` (${p.documento_numero})` : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {!form.paciente_id && (
+              <input className="input" placeholder="O nombre temporal si aun no esta registrado" value={form.paciente_pendiente_nombre} onChange={(e) => setForm({ ...form, paciente_pendiente_nombre: e.target.value })} />
+            )}
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Tipo de cirugia</label>
+              <input className="input" placeholder="ej. Apendicectomia" value={form.tipo_cirugia} onChange={(e) => setForm({ ...form, tipo_cirugia: e.target.value })} />
+            </div>
+
+            <div className="pt-2 border-t">
+              <h3 className="text-sm font-semibold mb-2">Equipo medico</h3>
+
+              <div>
+                <label className="text-xs font-medium text-slate-700">Cirujano *</label>
+                <select className="input" value={form.medico_principal_id} onChange={(e) => setForm({ ...form, medico_principal_id: e.target.value })}>
+                  <option value="">-- Seleccionar cirujano --</option>
+                  {medicos.map((m) => <option key={m.id} value={m.id}>{m.nombres} {m.apellidos}{m.especialidad ? ` - ${m.especialidad}` : ""}</option>)}
+                </select>
+              </div>
+
+              <div className="mt-2">
+                <label className="text-xs font-medium text-slate-700">Ayudante (opcional)</label>
+                <select className="input" value={form.cirujano_ayudante_id} onChange={(e) => setForm({ ...form, cirujano_ayudante_id: e.target.value })}>
+                  <option value="">-- Sin ayudante --</option>
+                  {medicos.map((m) => <option key={m.id} value={m.id}>{m.nombres} {m.apellidos}{m.especialidad ? ` - ${m.especialidad}` : ""}</option>)}
+                </select>
+              </div>
+
+              <div className="mt-2">
+                <label className="text-xs font-medium text-slate-700">Anestesiologo (opcional)</label>
+                <select className="input" value={form.anestesiologo_id} onChange={(e) => setForm({ ...form, anestesiologo_id: e.target.value })}>
+                  <option value="">-- Sin anestesiologo --</option>
+                  {medicos.map((m) => <option key={m.id} value={m.id}>{m.nombres} {m.apellidos}{m.especialidad ? ` - ${m.especialidad}` : ""}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700">Observaciones</label>
+              <textarea className="input" value={form.observaciones} onChange={(e) => setForm({ ...form, observaciones: e.target.value })} />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button className="btn-secondary" onClick={() => { setShow(false); setForm(blankCirugia); }}>Cancelar</button>
               <button className="btn" onClick={submit}>Guardar</button>
             </div>
           </div>

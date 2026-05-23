@@ -98,6 +98,24 @@ export default function Atencion() {
     refrescar();
   };
 
+  const devolver = async (consumoId: number, maxCant: number, producto: string) => {
+    const cantStr = prompt(`Devolver ${producto}\nCantidad a devolver (max ${maxCant}):`, String(maxCant));
+    if (!cantStr) return;
+    const areaIdStr = prompt(
+      "Area de farmacia interna donde reingresa el stock:\n" +
+        areas.map((a) => `${a.id}: ${a.nombre}`).join("\n")
+    );
+    if (!areaIdStr) return;
+    try {
+      await api.post(`/api/enfermeria/consumos/${consumoId}/devolucion`, {
+        cantidad: Number(cantStr),
+        area_destino_id: Number(areaIdStr),
+        observaciones: "Devolucion - no utilizado",
+      });
+      refrescar();
+    } catch (e: any) { alert(e.message); }
+  };
+
   const cerrarYFacturar = async () => {
     if (!sel) return;
     if (!confirm(`Cerrar cuenta de ${sel.nombres} ${sel.apellidos}?\nSe egresara la habitacion, se generara la factura interna y se cerrara el episodio.`)) return;
@@ -199,7 +217,7 @@ export default function Atencion() {
                 <div className="card !p-2"><div className="text-xs text-slate-500">Habitacion facturable</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.habitacion_pendiente).toFixed(2)}</div></div>
               </div>
               <table className="table">
-                <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripcion</th><th>Cant</th><th>Precio</th><th>Subtotal</th><th>Fact</th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripcion</th><th>Cant</th><th>Precio</th><th>Subtotal</th><th>Fact</th><th></th></tr></thead>
                 <tbody>
                   {estado.ocupaciones.map((o: any) => (
                     <tr key={`o${o.id}`} className={!o.fecha_egreso ? "bg-blue-50/40" : ""}>
@@ -210,6 +228,7 @@ export default function Atencion() {
                       <td>{Number(o.precio_diario_snapshot).toFixed(2)}</td>
                       <td>${Number(o.subtotal).toFixed(2)}</td>
                       <td>{o.facturado ? "Si" : "No"}</td>
+                      <td></td>
                     </tr>
                   ))}
                   {estado.consumos.map((c: any) => (
@@ -221,10 +240,18 @@ export default function Atencion() {
                       <td>{Number(c.precio_venta_snapshot).toFixed(2)}</td>
                       <td>${Number(c.subtotal).toFixed(2)}</td>
                       <td>{c.facturado ? "Si" : "No"}</td>
+                      <td>
+                        {!c.facturado && !c.es_servicio && c.cantidad > 0 && (
+                          <button className="btn-secondary text-xs" onClick={() => devolver(c.id, c.cantidad, c.producto)}>Devolver</button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              <p className="text-xs text-slate-500">
+                "Devolver" reingresa el producto no utilizado al stock de la farmacia interna (preservando el lote). Solo aplica a productos no facturados.
+              </p>
             </div>
           )}
 
