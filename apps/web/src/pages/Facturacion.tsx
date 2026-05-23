@@ -21,7 +21,6 @@ type LoteDisp = { id: number; numero_lote: string; fecha_vencimiento: string; st
 type ResumenCuenta = {
   episodio: any;
   categorias: Array<{ categoria_id: number; categoria: string; subtotal: number; items: number }>;
-  habitacion: { subtotal: number; registros: number } | null;
   subtotal_consumos: number; subtotal_total: number;
 };
 type DescInput = { tipo: "pct" | "monto"; valor: string };
@@ -201,11 +200,10 @@ export default function Facturacion() {
         subtotalCats += neto;
       }
     } else {
-      subtotalCats = Number(m.ep.cargos_consumos);
+      subtotalCats = Number(m.ep.cargos_consumos) + Number(m.ep.cargos_habitacion);
     }
-    const subtotalHab = r ? Number(r.habitacion?.subtotal ?? 0) : Number(m.ep.cargos_habitacion);
     const subtotalExtra = m.cargosExtra.reduce((s, ce) => s + ce.cant * ce.precio, 0);
-    const subtotalBruto = subtotalCats + subtotalHab + subtotalExtra;
+    const subtotalBruto = subtotalCats + subtotalExtra;
     const descGlobalCalc = calcDescMonto(subtotalBruto, m.descGlobal);
     const subtotalNeto = subtotalBruto - descGlobalCalc;
     const iva = subtotalNeto * m.ivaPct / 100;
@@ -422,15 +420,6 @@ export default function Facturacion() {
                         </div>
                       );
                     })}
-                    {(r.habitacion?.subtotal ?? 0) > 0 && (
-                      <div className="rounded border bg-slate-50 p-2 flex justify-between items-center">
-                        <div>
-                          <div className="font-medium text-sm">Habitacion</div>
-                          <div className="text-xs text-slate-400">{r.habitacion?.registros} registro(s) (est.)</div>
-                        </div>
-                        <div className="text-sm font-semibold">${Number(r.habitacion?.subtotal ?? 0).toFixed(2)}</div>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">

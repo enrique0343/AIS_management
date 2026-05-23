@@ -267,10 +267,15 @@ app.get("/episodios/:id/resumen-cuenta", requireRole("admin", "facturacion"), as
       WHERE oh.episodio_id = ? AND oh.factura_detalle_id IS NULL`
   ).bind(id).first<{ subtotal: number; registros: number }>();
   const subtotalConsumos = (categorias as any[]).reduce((s: number, c: any) => s + Number(c.subtotal), 0);
+  const allCategorias = [
+    ...(categorias as any[]),
+    ...(Number(habRow?.subtotal ?? 0) > 0
+      ? [{ categoria_id: -1, categoria: "Habitacion", subtotal: Number(habRow!.subtotal), items: habRow!.registros }]
+      : []),
+  ];
   return c.json({
     episodio: epInfo,
-    categorias,
-    habitacion: habRow,
+    categorias: allCategorias,
     subtotal_consumos: +subtotalConsumos.toFixed(2),
     subtotal_total: +(subtotalConsumos + Number(habRow?.subtotal ?? 0)).toFixed(2),
   });
@@ -372,9 +377,11 @@ app.post(
     for (const c0 of consumos.results ?? []) {
       catSubtotals.set(c0.categoria, +((catSubtotals.get(c0.categoria) ?? 0) + c0.cantidad * c0.precio_venta_snapshot));
     }
+    let habitacionSubtotal = 0;
+    for (const o of ocupaciones.results ?? []) habitacionSubtotal += o.dias * o.precio_diario_snapshot;
+    if (habitacionSubtotal > 0) catSubtotals.set("Habitacion", +habitacionSubtotal.toFixed(2));
     let subtotalBruto = 0;
     for (const [, sub] of catSubtotals) subtotalBruto += sub;
-    for (const o of ocupaciones.results ?? []) subtotalBruto += o.dias * o.precio_diario_snapshot;
     for (const e of cargosExtra) subtotalBruto += e.cantidad * e.precio_unitario;
 
     // Descuentos
