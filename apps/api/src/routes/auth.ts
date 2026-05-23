@@ -25,10 +25,6 @@ app.post("/bootstrap", async (c) => {
     return c.json({ error: "ya_inicializado" }, 400);
   }
   const body = await c.req.json().catch(() => null);
-  const parsed = LoginInput.extend({ nombre: (LoginInput as any).shape.email.constructor }).safeParse(
-    body
-  );
-  // Validacion manual mas simple:
   if (
     !body ||
     typeof body.email !== "string" ||
