@@ -263,6 +263,8 @@ app.get("/_en-atencion", async (c) => {
     `SELECT DISTINCT p.id, p.expediente, p.nombres, p.apellidos,
             e.id AS episodio_id, e.fecha_inicio, e.motivo,
             e.alta_solicitada_en, e.estado AS episodio_estado,
+            e.medico_id AS medico_cabecera_id,
+            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = e.medico_id) AS medico_cabecera_nombre,
             o.id AS ocupacion_id, h.numero AS habitacion, h.tipo AS habitacion_tipo,
             o.fecha_ingreso AS habitacion_desde,
             (SELECT COUNT(*) FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL) AS consumos_pend,

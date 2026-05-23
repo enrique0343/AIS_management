@@ -68,6 +68,9 @@ app.post(
   async (c) => {
     const b = await c.req.json().catch(() => null);
     if (!b?.paciente_id || !b?.habitacion_id) return c.json({ error: "datos_invalidos" }, 400);
+    if (!b?.medico_cabecera_id) {
+      return c.json({ error: "medico_cabecera_requerido", detalle: "debe seleccionarse el medico de cabecera registrado" }, 400);
+    }
 
     const hab = await c.env.DB.prepare(
       `SELECT id, precio_diario, capacidad, activa FROM habitacion WHERE id = ?`
@@ -76,6 +79,13 @@ app.post(
       .first<{ id: number; precio_diario: number; capacidad: number; activa: number }>();
     if (!hab) return c.json({ error: "habitacion_no_encontrada" }, 404);
     if (!hab.activa) return c.json({ error: "habitacion_inactiva" }, 400);
+
+    const med = await c.env.DB.prepare(
+      `SELECT id FROM profesional_medico WHERE id = ? AND activo = 1`
+    )
+      .bind(b.medico_cabecera_id)
+      .first<{ id: number }>();
+    if (!med) return c.json({ error: "medico_cabecera_no_encontrado_o_inactivo" }, 400);
 
     const ocup = await c.env.DB.prepare(
       `SELECT COUNT(*) AS n FROM ocupacion_habitacion
@@ -98,6 +108,7 @@ app.post(
 
     // Si no se especifica episodio_id, usar el activo del paciente o crear uno.
     // Asignar habitacion = hospitalizar; no requiere cargos previos.
+    // Se registra el medico de cabecera en episodio_atencion.medico_id.
     let episodioId: number | null = b.episodio_id ?? null;
     if (!episodioId) {
       const epActivo = await c.env.DB.prepare(
@@ -109,13 +120,19 @@ app.post(
         episodioId = epActivo.id;
       } else {
         const ep = await c.env.DB.prepare(
-          `INSERT INTO episodio_atencion (paciente_id, motivo) VALUES (?, ?)`
+          `INSERT INTO episodio_atencion (paciente_id, medico_id, motivo) VALUES (?, ?, ?)`
         )
-          .bind(b.paciente_id, b.motivo ?? "Hospitalizacion")
+          .bind(b.paciente_id, b.medico_cabecera_id, b.motivo ?? "Hospitalizacion")
           .run();
         episodioId = ep.meta.last_row_id as number;
       }
     }
+    // Actualizar medico de cabecera del episodio (sobrescribe el previo si lo hubiera)
+    await c.env.DB.prepare(
+      `UPDATE episodio_atencion SET medico_id = ? WHERE id = ?`
+    )
+      .bind(b.medico_cabecera_id, episodioId)
+      .run();
 
     const r = await c.env.DB.prepare(
       `INSERT INTO ocupacion_habitacion

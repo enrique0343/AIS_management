@@ -11,6 +11,8 @@ type EnAtencion = {
   fecha_inicio: string;
   motivo: string | null;
   alta_solicitada_en: string | null;
+  medico_cabecera_id: number | null;
+  medico_cabecera_nombre: string | null;
   ocupacion_id: number | null;
   habitacion: string | null;
   habitacion_tipo: string | null;
@@ -18,6 +20,8 @@ type EnAtencion = {
   consumos_pend: number;
   cirugia_proxima: string | null;
 };
+
+type Medico = { id: number; nombres: string; apellidos: string; especialidad: string | null; activo: number };
 
 type Habitacion = {
   id: number;
@@ -55,7 +59,8 @@ export default function Atencion() {
   const [showHosp, setShowHosp] = useState(false);
   const [busqPac, setBusqPac] = useState("");
   const [pacientesBusq, setPacientesBusq] = useState<Pac[]>([]);
-  const [hospForm, setHospForm] = useState<any>({ paciente_id: "", habitacion_id: "", motivo: "Hospitalizacion", observaciones: "" });
+  const [medicos, setMedicos] = useState<Medico[]>([]);
+  const [hospForm, setHospForm] = useState<any>({ paciente_id: "", habitacion_id: "", medico_cabecera_id: "", motivo: "Hospitalizacion", observaciones: "" });
 
   const loadList = () => {
     api.get<{ data: EnAtencion[] }>("/api/pacientes/_en-atencion").then((r) => setPacientes(r.data));
@@ -66,6 +71,7 @@ export default function Atencion() {
   useEffect(() => {
     loadList();
     api.get<{ data: any[] }>("/api/catalogos/areas").then((r) => setAreas(r.data));
+    api.get<{ data: Medico[] }>("/api/profesionales/medicos").then((r) => setMedicos(r.data.filter((m) => m.activo)));
   }, []);
 
   const totalCamas = habitaciones.filter((h) => h.activa).reduce((s, h) => s + h.capacidad, 0);
@@ -142,16 +148,20 @@ export default function Atencion() {
   };
 
   const hospitalizar = async () => {
-    if (!hospForm.paciente_id || !hospForm.habitacion_id) { alert("Selecciona paciente y habitacion"); return; }
+    if (!hospForm.paciente_id || !hospForm.habitacion_id || !hospForm.medico_cabecera_id) {
+      alert("Selecciona paciente, habitacion y medico de cabecera");
+      return;
+    }
     try {
       await api.post("/api/habitaciones/asignar", {
         paciente_id: Number(hospForm.paciente_id),
         habitacion_id: Number(hospForm.habitacion_id),
+        medico_cabecera_id: Number(hospForm.medico_cabecera_id),
         motivo: hospForm.motivo || "Hospitalizacion",
         observaciones: hospForm.observaciones || null,
       });
       setShowHosp(false);
-      setHospForm({ paciente_id: "", habitacion_id: "", motivo: "Hospitalizacion", observaciones: "" });
+      setHospForm({ paciente_id: "", habitacion_id: "", medico_cabecera_id: "", motivo: "Hospitalizacion", observaciones: "" });
       setBusqPac("");
       setPacientesBusq([]);
       loadList();
@@ -243,6 +253,9 @@ export default function Atencion() {
                     ) : (
                       <div className="text-slate-400">Sin habitacion - ambulatorio</div>
                     )}
+                    {p.medico_cabecera_nombre && (
+                      <div className="text-xs"><span className="text-slate-500">Dr/a. de cabecera:</span> {p.medico_cabecera_nombre}</div>
+                    )}
                     {p.cirugia_proxima && <div className="text-xs">Cirugia: {p.cirugia_proxima}</div>}
                     <div className="text-xs text-slate-500 mt-1">Inicio: {p.fecha_inicio}</div>
                     <div className="text-xs">{p.consumos_pend} cargos pendientes de facturar</div>
@@ -267,6 +280,9 @@ export default function Atencion() {
                     <span className="text-slate-400">Sin habitacion asignada</span>
                   )}
                 </div>
+                {sel.medico_cabecera_nombre && (
+                  <div className="text-sm mt-1"><span className="text-slate-500">Medico de cabecera:</span> <strong>{sel.medico_cabecera_nombre}</strong></div>
+                )}
                 {sel.cirugia_proxima && <div className="text-sm mt-1">Cirugia vinculada: <strong>{sel.cirugia_proxima}</strong></div>}
                 {sel.alta_solicitada_en && (
                   <div className="mt-2 inline-block px-2 py-1 bg-amber-100 text-amber-700 rounded text-xs">
@@ -405,6 +421,20 @@ export default function Atencion() {
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Medico de cabecera *</label>
+              <select className="input" value={hospForm.medico_cabecera_id} onChange={(e) => setHospForm({ ...hospForm, medico_cabecera_id: e.target.value })}>
+                <option value="">-- Seleccionar medico --</option>
+                {medicos.length === 0 && <option disabled>No hay medicos registrados</option>}
+                {medicos.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.nombres} {m.apellidos}{m.especialidad ? ` - ${m.especialidad}` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-slate-500">Si el medico no aparece, registrarlo primero en <strong>Profesionales</strong>.</p>
             </div>
 
             <div>
