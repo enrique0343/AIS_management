@@ -72,6 +72,24 @@ app.post("/:id/roles", async (c) => {
 app.post("/:id/desactivar", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   await c.env.DB.prepare(`UPDATE usuario SET activo = 0 WHERE id = ?`).bind(id).run();
+  await logAudit(c.env, { usuario_id: c.get("session")!.usuario_id, accion: "desactivar_usuario", entidad: "usuario", entidad_id: id, ip: c.get("ip") });
+  return c.json({ ok: true });
+});
+
+app.post("/:id/activar", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE usuario SET activo = 1 WHERE id = ?`).bind(id).run();
+  await logAudit(c.env, { usuario_id: c.get("session")!.usuario_id, accion: "activar_usuario", entidad: "usuario", entidad_id: id, ip: c.get("ip") });
+  return c.json({ ok: true });
+});
+
+app.post("/:id/reset-password", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.password || b.password.length < 8) return c.json({ error: "password_minimo_8" }, 400);
+  const hash = await hashPassword(b.password);
+  await c.env.DB.prepare(`UPDATE usuario SET password_hash = ? WHERE id = ?`).bind(hash, id).run();
+  await logAudit(c.env, { usuario_id: c.get("session")!.usuario_id, accion: "reset_password", entidad: "usuario", entidad_id: id, ip: c.get("ip") });
   return c.json({ ok: true });
 });
 
@@ -79,14 +97,16 @@ app.get("/auditoria", async (c) => {
   const desde = c.req.query("desde");
   const hasta = c.req.query("hasta");
   const accion = c.req.query("accion");
+  const usuarioId = c.req.query("usuario_id");
   const filt: string[] = ["1=1"];
   const binds: unknown[] = [];
   if (desde) { filt.push("date(a.fecha) >= ?"); binds.push(desde); }
   if (hasta) { filt.push("date(a.fecha) <= ?"); binds.push(hasta); }
   if (accion) { filt.push("a.accion = ?"); binds.push(accion); }
+  if (usuarioId) { filt.push("a.usuario_id = ?"); binds.push(parseInt(usuarioId, 10)); }
   const { results } = await c.env.DB.prepare(
     `SELECT a.id, a.fecha, a.accion, a.entidad, a.entidad_id, a.payload, a.ip,
-            u.email AS usuario
+            u.id AS usuario_id, u.email AS usuario
        FROM audit_log a
        LEFT JOIN usuario u ON u.id = a.usuario_id
       WHERE ${filt.join(" AND ")}
@@ -96,6 +116,13 @@ app.get("/auditoria", async (c) => {
     .bind(...binds)
     .all();
   return c.json({ data: results });
+});
+
+app.get("/auditoria/acciones", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT DISTINCT accion FROM audit_log ORDER BY accion`
+  ).all<{ accion: string }>();
+  return c.json({ data: results.map((r) => r.accion) });
 });
 
 app.get("/roles", async (c) => {
