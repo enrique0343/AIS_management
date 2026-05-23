@@ -107,6 +107,16 @@ app.post("/", requireRole("admin", "facturacion"), async (c) => {
   return c.json({ id: r.meta.last_row_id });
 });
 
+app.delete("/:id", requireRole("admin"), async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const g = await c.env.DB.prepare(`SELECT id, doc_r2_key FROM gasto_operativo WHERE id = ?`).bind(id).first<{ id: number; doc_r2_key: string | null }>();
+  if (!g) return c.json({ error: "no_encontrado" }, 404);
+  if (g.doc_r2_key) await c.env.DOCS.delete(g.doc_r2_key).catch(() => {});
+  await c.env.DB.prepare(`DELETE FROM gasto_operativo WHERE id = ?`).bind(id).run();
+  await logAudit(c.env, { usuario_id: c.get("session")!.usuario_id, accion: "eliminar_gasto", entidad: "gasto_operativo", entidad_id: id, ip: c.get("ip") });
+  return c.json({ ok: true });
+});
+
 // Adjuntar soporte (PDF/imagen) del gasto a R2
 app.post(
   "/:id/soporte",
