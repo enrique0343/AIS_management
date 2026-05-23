@@ -9,7 +9,7 @@ const menu = [
   { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones" as const },
   { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"] },
   { to: "/enfermeria", label: "Enfermeria (consumos directos)", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
-  { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"] },
+  { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"], badge: "alta" as const },
   { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"] },
   { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"] },
   { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"] },
@@ -21,6 +21,7 @@ const menu = [
 export default function Layout() {
   const { user, logout } = useAuth();
   const [reqPend, setReqPend] = useState<number>(0);
+  const [altaPend, setAltaPend] = useState<number>(0);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
@@ -31,6 +32,17 @@ export default function Layout() {
     const cargar = () =>
       api.get<{ n: number }>("/api/requisiciones/_pendientes_count")
         .then((r) => { if (!stop) setReqPend(r.n); })
+        .catch(() => {});
+    cargar();
+    const t = setInterval(cargar, 30000);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
+
+  useEffect(() => {
+    let stop = false;
+    const cargar = () =>
+      api.get<{ n: number }>("/api/facturacion/_alta_count")
+        .then((r) => { if (!stop) setAltaPend(r.n); })
         .catch(() => {});
     cargar();
     const t = setInterval(cargar, 30000);
@@ -82,6 +94,9 @@ export default function Layout() {
                 {(m as any).badge === "requisiciones" && reqPend > 0 && (
                   <span className="bg-red-500 text-white text-xs px-1.5 rounded-full">{reqPend}</span>
                 )}
+                {(m as any).badge === "alta" && altaPend > 0 && (
+                  <span className="bg-amber-500 text-white text-xs px-1.5 rounded-full">{altaPend}</span>
+                )}
               </NavLink>
             ))}
         </nav>
@@ -115,6 +130,11 @@ export default function Layout() {
           {reqPend > 0 && (
             <NavLink to="/farmacia" className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
               {reqPend} pend.
+            </NavLink>
+          )}
+          {altaPend > 0 && (
+            <NavLink to="/facturacion" className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full font-semibold">
+              {altaPend} alta
             </NavLink>
           )}
         </header>

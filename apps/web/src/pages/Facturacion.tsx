@@ -1,46 +1,114 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 
-type Factura = { id: number; numero: string; fecha: string; total: number; estado: string; paciente: string };
+type Factura = { id: number; numero: string; fecha: string; total: number; subtotal: number; iva: number; estado: string; paciente: string };
 type Detalle = { id: number; descripcion: string; cantidad: number; precio_unitario: number; subtotal: number };
 type Pago = { id: number; metodo: string; monto: number; fecha: string; referencia: string | null };
+type AltaPend = {
+  episodio_id: number;
+  paciente_id: number;
+  expediente: string;
+  nombres: string;
+  apellidos: string;
+  fecha_inicio: string;
+  alta_solicitada_en: string;
+  habitacion: string | null;
+  habitacion_tipo: string | null;
+  medico_cabecera: string | null;
+  cargos_consumos: number;
+  cargos_habitacion: number;
+  devoluciones_pendientes: number;
+  requisiciones_activas: number;
+};
+
+type CargoExtra = { desc: string; cant: number; precio: number };
+type CierreModal = { ep: AltaPend; ivaPct: number; cargosExtra: CargoExtra[] };
 
 export default function Facturacion() {
+  const [tab, setTab] = useState<"cola" | "facturas" | "reporte">("cola");
+  const [altaPend, setAltaPend] = useState<AltaPend[]>([]);
   const [items, setItems] = useState<Factura[]>([]);
-  const [episodios, setEpisodios] = useState<any[]>([]);
-  const [episodioId, setEpisodioId] = useState("");
-  const [soloPendientes, setSoloPendientes] = useState(true);
-  const [ivaPct, setIvaPct] = useState("13");
+  const [detalle, setDetalle] = useState<{ factura: Factura; detalles: Detalle[]; pagos: Pago[] } | null>(null);
+  const [cierreModal, setCierreModal] = useState<CierreModal | null>(null);
+  const [pagoModal, setPagoModal] = useState<{ facturaId: number; total: number } | null>(null);
+  const [pagoForm, setPagoForm] = useState({ metodo: "efectivo", monto: "", referencia: "" });
   const [reporte, setReporte] = useState<any[]>([]);
-  const [detalle, setDetalle] = useState<{ factura: any; detalles: Detalle[]; pagos: Pago[] } | null>(null);
-  const [cargos, setCargos] = useState<{ descripcion: string; cantidad: number; precio_unitario: number }[]>([]);
-
-  const load = () => api.get<{ data: Factura[] }>("/api/facturacion/facturas").then((r) => setItems(r.data));
-  const loadEpisodios = () => api.get<{ data: any[] }>("/api/pacientes/episodios/list").then((r) => setEpisodios(r.data));
-
-  useEffect(() => { load(); loadEpisodios(); }, []);
-
-  const emitir = async () => {
-    if (!episodioId) return;
-    try {
-      await api.post("/api/facturacion/facturas", {
-        episodio_id: Number(episodioId),
-        iva_pct: Number(ivaPct),
-        cargos_extra: cargos.length ? cargos : undefined,
-      });
-      setEpisodioId("");
-      setCargos([]);
-      load();
-    } catch (e: any) {
-      alert(e.message);
-    }
-  };
-
   const [repDesde, setRepDesde] = useState(() => new Date().toISOString().slice(0, 10));
   const [repHasta, setRepHasta] = useState(() => new Date().toISOString().slice(0, 10));
 
+  const loadCola = () =>
+    api.get<{ data: AltaPend[] }>("/api/facturacion/pendientes-alta").then((r) => setAltaPend(r.data)).catch(() => {});
+  const loadFacturas = () =>
+    api.get<{ data: Factura[] }>("/api/facturacion/facturas").then((r) => setItems(r.data)).catch(() => {});
+
+  useEffect(() => {
+    loadCola();
+    loadFacturas();
+  }, []);
+
+  const abrirCierre = (ep: AltaPend) => setCierreModal({ ep, ivaPct: 13, cargosExtra: [] });
+
+  const confirmarCierre = async () => {
+    if (!cierreModal) return;
+    try {
+      const r = await api.post<any>(
+        `/api/facturacion/episodios/${cierreModal.ep.episodio_id}/cerrar-y-facturar`,
+        {
+          iva_pct: cierreModal.ivaPct,
+          permitir_cero: true,
+          cargos_extra: cierreModal.cargosExtra.map((c) => ({
+            descripcion: c.desc,
+            cantidad: c.cant,
+            precio_unitario: c.precio,
+          })),
+        }
+      );
+      alert(`Cuenta cerrada. Factura ${r.numero} por $${Number(r.total).toFixed(2)}`);
+      setCierreModal(null);
+      loadCola();
+      loadFacturas();
+    } catch (e: any) {
+      alert(e.message ?? "Error al cerrar cuenta");
+    }
+  };
+
+  const abrir = async (id: number) => {
+    const r = await api.get<any>(`/api/facturacion/facturas/${id}`);
+    setDetalle(r);
+  };
+
+  const abrirPago = (facturaId: number, total: number) => {
+    setPagoModal({ facturaId, total });
+    setPagoForm({ metodo: "efectivo", monto: String(total), referencia: "" });
+  };
+
+  const confirmarPago = async () => {
+    if (!pagoModal) return;
+    try {
+      await api.post(`/api/facturacion/facturas/${pagoModal.facturaId}/pagos`, {
+        metodo: pagoForm.metodo,
+        monto: Number(pagoForm.monto),
+        referencia: pagoForm.referencia || null,
+      });
+      setPagoModal(null);
+      loadFacturas();
+      if (detalle?.factura.id === pagoModal.facturaId) abrir(pagoModal.facturaId);
+    } catch (e: any) {
+      alert(e.message ?? "Error al registrar pago");
+    }
+  };
+
+  const anular = async (id: number) => {
+    if (!confirm("Anular factura?")) return;
+    await api.post(`/api/facturacion/facturas/${id}/anular`);
+    setDetalle(null);
+    loadFacturas();
+  };
+
   const verReporte = async () => {
-    const r = await api.get<{ data: any[] }>(`/api/facturacion/reporte-ingresos?desde=${repDesde}&hasta=${repHasta}`);
+    const r = await api.get<{ data: any[] }>(
+      `/api/facturacion/reporte-ingresos?desde=${repDesde}&hasta=${repHasta}`
+    );
     setReporte(r.data);
   };
 
@@ -57,123 +125,432 @@ export default function Facturacion() {
     URL.revokeObjectURL(url);
   };
 
-  const abrir = async (id: number) => {
-    const r = await api.get<any>(`/api/facturacion/facturas/${id}`);
-    setDetalle(r);
-  };
-
-  const pagar = async (id: number) => {
-    const monto = prompt("Monto del pago:");
-    if (!monto) return;
-    const metodo = prompt("Metodo (efectivo/tarjeta/transferencia):") ?? "efectivo";
-    await api.post(`/api/facturacion/facturas/${id}/pagos`, { metodo, monto: Number(monto) });
-    load();
-    if (detalle?.factura.id === id) abrir(id);
-  };
-
-  const anular = async (id: number) => {
-    if (!confirm("Anular factura?")) return;
-    await api.post(`/api/facturacion/facturas/${id}/anular`);
-    setDetalle(null);
-    load();
+  const updateCargoExtra = (i: number, field: keyof CargoExtra, val: string | number) => {
+    if (!cierreModal) return;
+    const updated = [...cierreModal.cargosExtra];
+    updated[i] = { ...updated[i], [field]: val };
+    setCierreModal({ ...cierreModal, cargosExtra: updated });
   };
 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Facturacion</h1>
 
-      <div className="card space-y-2">
-        <h2 className="font-semibold">Emitir factura desde episodio</h2>
-        <div className="flex gap-2 items-end flex-wrap">
-          <div className="flex-1 min-w-[300px]">
-            <label className="text-xs">Episodio</label>
-            <select className="input" value={episodioId} onChange={(e) => setEpisodioId(e.target.value)}>
-              <option value="">-- Seleccionar --</option>
-              {episodios
-                .filter((e) => !soloPendientes || e.consumos_pendientes > 0)
-                .map((e) => (
-                  <option key={e.id} value={e.id}>
-                    #{e.id} - {e.paciente} ({e.expediente}) - {e.fecha_inicio} [{e.estado}] - {e.consumos_pendientes} consumos pend
-                  </option>
-                ))}
-            </select>
-          </div>
-          <label className="text-xs flex items-center gap-1"><input type="checkbox" checked={soloPendientes} onChange={(e) => setSoloPendientes(e.target.checked)} /> Solo con pendientes</label>
-          <div><label className="text-xs">IVA %</label><input className="input w-24" type="number" step="0.01" value={ivaPct} onChange={(e) => setIvaPct(e.target.value)} /></div>
-          <button className="btn" onClick={emitir}>Emitir</button>
-          <button className="btn-secondary" onClick={() => { load(); loadEpisodios(); }}>Refrescar</button>
-        </div>
-        <div className="flex gap-2 items-end flex-wrap border-t pt-2 mt-2">
-          <div><label className="text-xs">Reporte desde</label><input className="input" type="date" value={repDesde} onChange={(e) => setRepDesde(e.target.value)} /></div>
-          <div><label className="text-xs">hasta</label><input className="input" type="date" value={repHasta} onChange={(e) => setRepHasta(e.target.value)} /></div>
-          <button className="btn-secondary" onClick={verReporte}>Generar</button>
-          {!!reporte.length && <button className="btn-secondary" onClick={exportarCSV}>Exportar CSV</button>}
-        </div>
-        <div className="text-xs font-medium text-slate-500 mt-2">Cargos extra (servicios, quirofano, etc)</div>
-        {cargos.map((c, i) => (
-          <div key={i} className="grid grid-cols-12 gap-2">
-            <input className="input col-span-6" placeholder="Descripcion" value={c.descripcion} onChange={(e) => { const cs = [...cargos]; cs[i].descripcion = e.target.value; setCargos(cs); }} />
-            <input className="input col-span-2" type="number" placeholder="Cant" value={c.cantidad} onChange={(e) => { const cs = [...cargos]; cs[i].cantidad = Number(e.target.value); setCargos(cs); }} />
-            <input className="input col-span-3" type="number" step="0.01" placeholder="Precio" value={c.precio_unitario} onChange={(e) => { const cs = [...cargos]; cs[i].precio_unitario = Number(e.target.value); setCargos(cs); }} />
-            <button className="btn-secondary col-span-1" onClick={() => setCargos(cargos.filter((_, idx) => idx !== i))}>x</button>
-          </div>
+      <div className="flex gap-1 border-b">
+        {(["cola", "facturas", "reporte"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {t === "cola" ? "Cola de alta" : t === "facturas" ? "Facturas emitidas" : "Reporte de ingresos"}
+            {t === "cola" && altaPend.length > 0 && (
+              <span className="ml-2 bg-amber-500 text-white text-xs px-1.5 rounded-full">{altaPend.length}</span>
+            )}
+          </button>
         ))}
-        <button className="btn-secondary text-xs" onClick={() => setCargos([...cargos, { descripcion: "", cantidad: 1, precio_unitario: 0 }])}>+ Cargo extra</button>
+      </div>
 
-        {!!reporte.length && (
-          <table className="table mt-2">
-            <thead><tr><th>Dia</th><th>Metodo</th><th>Cantidad</th><th>Total</th></tr></thead>
+      {tab === "cola" && (
+        <div className="space-y-3">
+          <div className="flex justify-between items-center">
+            <p className="text-sm text-slate-500">
+              Pacientes con alta solicitada pendientes de revision y facturacion.
+            </p>
+            <button className="btn-secondary text-xs" onClick={loadCola}>
+              Refrescar
+            </button>
+          </div>
+          {!altaPend.length && (
+            <div className="card text-sm text-slate-500">No hay pacientes en cola de alta.</div>
+          )}
+          {altaPend.map((ep) => {
+            const bloqueado = ep.devoluciones_pendientes > 0 || ep.requisiciones_activas > 0;
+            const total = Number(ep.cargos_consumos) + Number(ep.cargos_habitacion);
+            return (
+              <div
+                key={ep.episodio_id}
+                className={`card border-l-4 ${bloqueado ? "border-red-400" : "border-amber-400"}`}
+              >
+                <div className="flex justify-between items-start flex-wrap gap-2">
+                  <div>
+                    <div className="font-semibold text-lg">
+                      {ep.nombres} {ep.apellidos}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Exp: {ep.expediente} — Episodio #{ep.episodio_id}
+                    </div>
+                    <div className="text-xs mt-1">
+                      {ep.habitacion ? (
+                        <span>
+                          Habitacion <strong>{ep.habitacion}</strong> ({ep.habitacion_tipo})
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">Sin habitacion</span>
+                      )}
+                      {ep.medico_cabecera && (
+                        <span className="ml-3 text-slate-500">Dr/a. {ep.medico_cabecera}</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Ingreso: {ep.fecha_inicio} — Alta solicitada: {ep.alta_solicitada_en}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xl font-bold text-slate-800">${total.toFixed(2)}</div>
+                    <div className="text-xs text-slate-500">
+                      Consumos: ${Number(ep.cargos_consumos).toFixed(2)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Habitacion est.: ${Number(ep.cargos_habitacion).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+
+                {bloqueado && (
+                  <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 space-y-0.5">
+                    <div className="font-medium">Bloqueado — resolver antes de facturar:</div>
+                    {ep.devoluciones_pendientes > 0 && (
+                      <div>
+                        • {ep.devoluciones_pendientes} devolucion(es) pendiente(s) de procesar en farmacia
+                      </div>
+                    )}
+                    {ep.requisiciones_activas > 0 && (
+                      <div>• {ep.requisiciones_activas} requisicion(es) activa(s) sin completar</div>
+                    )}
+                  </div>
+                )}
+
+                {!bloqueado && (
+                  <div className="mt-3 flex justify-end">
+                    <button className="btn" onClick={() => abrirCierre(ep)}>
+                      Revisar y facturar
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {tab === "facturas" && (
+        <div className="card overflow-auto">
+          <div className="flex justify-end mb-2">
+            <button className="btn-secondary text-xs" onClick={loadFacturas}>
+              Refrescar
+            </button>
+          </div>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Numero</th>
+                <th>Fecha</th>
+                <th>Paciente</th>
+                <th>Total</th>
+                <th>Estado</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
-              {reporte.map((r, i) => (
-                <tr key={i}><td>{r.dia}</td><td>{r.metodo}</td><td>{r.cantidad}</td><td>{Number(r.total).toFixed(2)}</td></tr>
+              {items.map((f) => (
+                <tr key={f.id}>
+                  <td>{f.numero}</td>
+                  <td>{f.fecha}</td>
+                  <td>{f.paciente}</td>
+                  <td>${Number(f.total).toFixed(2)}</td>
+                  <td>
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-xs ${
+                        f.estado === "pagada"
+                          ? "bg-green-100 text-green-700"
+                          : f.estado === "anulada"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {f.estado}
+                    </span>
+                  </td>
+                  <td className="space-x-1">
+                    <button className="btn-secondary text-xs" onClick={() => abrir(f.id)}>
+                      Ver
+                    </button>
+                    {f.estado === "pendiente" && (
+                      <button className="btn text-xs" onClick={() => abrirPago(f.id, f.total)}>
+                        Pago
+                      </button>
+                    )}
+                  </td>
+                </tr>
               ))}
             </tbody>
           </table>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="card overflow-auto">
-        <table className="table">
-          <thead><tr><th>Numero</th><th>Fecha</th><th>Paciente</th><th>Total</th><th>Estado</th><th></th></tr></thead>
-          <tbody>
-            {items.map((f) => (
-              <tr key={f.id}>
-                <td>{f.numero}</td>
-                <td>{f.fecha}</td>
-                <td>{f.paciente}</td>
-                <td>{Number(f.total).toFixed(2)}</td>
-                <td>{f.estado}</td>
-                <td className="space-x-1">
-                  <button className="btn-secondary text-xs" onClick={() => abrir(f.id)}>Ver</button>
-                  {f.estado === "pendiente" && <button className="btn text-xs" onClick={() => pagar(f.id)}>Pago</button>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {tab === "reporte" && (
+        <div className="card space-y-3">
+          <div className="flex gap-2 items-end flex-wrap">
+            <div>
+              <label className="text-xs">Desde</label>
+              <input
+                className="input"
+                type="date"
+                value={repDesde}
+                onChange={(e) => setRepDesde(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="text-xs">Hasta</label>
+              <input
+                className="input"
+                type="date"
+                value={repHasta}
+                onChange={(e) => setRepHasta(e.target.value)}
+              />
+            </div>
+            <button className="btn-secondary" onClick={verReporte}>
+              Generar
+            </button>
+            {!!reporte.length && (
+              <button className="btn-secondary" onClick={exportarCSV}>
+                Exportar CSV
+              </button>
+            )}
+          </div>
+          {!!reporte.length && (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Dia</th>
+                  <th>Metodo</th>
+                  <th>Cantidad</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reporte.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r.dia}</td>
+                    <td>{r.metodo}</td>
+                    <td>{r.cantidad}</td>
+                    <td>${Number(r.total).toFixed(2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
+      {cierreModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-2xl space-y-4 max-h-[90vh] overflow-auto">
+            <div className="flex justify-between items-start">
+              <div>
+                <h2 className="font-semibold text-lg">Cerrar cuenta y facturar</h2>
+                <div className="text-sm text-slate-500">
+                  {cierreModal.ep.nombres} {cierreModal.ep.apellidos} — Episodio #{cierreModal.ep.episodio_id}
+                </div>
+              </div>
+              <button className="btn-secondary" onClick={() => setCierreModal(null)}>
+                Cancelar
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-lg bg-slate-50 border p-3">
+                <div className="text-xs text-slate-500">Consumos pendientes</div>
+                <div className="text-lg font-semibold">
+                  ${Number(cierreModal.ep.cargos_consumos).toFixed(2)}
+                </div>
+              </div>
+              <div className="rounded-lg bg-slate-50 border p-3">
+                <div className="text-xs text-slate-500">Habitacion (estimado)</div>
+                <div className="text-lg font-semibold">
+                  ${Number(cierreModal.ep.cargos_habitacion).toFixed(2)}
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">IVA %</label>
+              <input
+                className="input w-32"
+                type="number"
+                step="0.01"
+                value={cierreModal.ivaPct}
+                onChange={(e) => setCierreModal({ ...cierreModal, ivaPct: Number(e.target.value) })}
+              />
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-1">
+                <label className="text-xs font-medium">Cargos adicionales (honorarios, estudios, etc.)</label>
+                <button
+                  className="text-xs text-blue-600 hover:underline"
+                  onClick={() =>
+                    setCierreModal({
+                      ...cierreModal,
+                      cargosExtra: [...cierreModal.cargosExtra, { desc: "", cant: 1, precio: 0 }],
+                    })
+                  }
+                >
+                  + Agregar
+                </button>
+              </div>
+              {cierreModal.cargosExtra.map((ce, i) => (
+                <div key={i} className="grid grid-cols-12 gap-1 mb-1">
+                  <input
+                    className="input col-span-6"
+                    placeholder="Descripcion"
+                    value={ce.desc}
+                    onChange={(e) => updateCargoExtra(i, "desc", e.target.value)}
+                  />
+                  <input
+                    className="input col-span-2 text-center"
+                    type="number"
+                    placeholder="Cant"
+                    value={ce.cant}
+                    onChange={(e) => updateCargoExtra(i, "cant", Number(e.target.value))}
+                  />
+                  <input
+                    className="input col-span-3"
+                    type="number"
+                    step="0.01"
+                    placeholder="Precio"
+                    value={ce.precio}
+                    onChange={(e) => updateCargoExtra(i, "precio", Number(e.target.value))}
+                  />
+                  <button
+                    className="btn-secondary col-span-1 text-xs"
+                    onClick={() =>
+                      setCierreModal({
+                        ...cierreModal,
+                        cargosExtra: cierreModal.cargosExtra.filter((_, idx) => idx !== i),
+                      })
+                    }
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="border-t pt-3 flex justify-between items-center gap-3">
+              <p className="text-xs text-amber-700">
+                Se egresara la habitacion, se generara la factura interna y se cerrara el episodio.
+              </p>
+              <button className="btn shrink-0" onClick={confirmarCierre}>
+                Confirmar y facturar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pagoModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-sm space-y-3">
+            <h2 className="font-semibold">Registrar pago</h2>
+            <div>
+              <label className="text-xs font-medium">Metodo</label>
+              <select
+                className="input"
+                value={pagoForm.metodo}
+                onChange={(e) => setPagoForm({ ...pagoForm, metodo: e.target.value })}
+              >
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="otro">Otro</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium">Monto</label>
+              <input
+                className="input"
+                type="number"
+                step="0.01"
+                value={pagoForm.monto}
+                onChange={(e) => setPagoForm({ ...pagoForm, monto: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Referencia (opcional)</label>
+              <input
+                className="input"
+                value={pagoForm.referencia}
+                onChange={(e) => setPagoForm({ ...pagoForm, referencia: e.target.value })}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setPagoModal(null)}>
+                Cancelar
+              </button>
+              <button className="btn" onClick={confirmarPago}>
+                Registrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {detalle && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="card w-full max-w-3xl space-y-3 max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-start">
               <div>
                 <h2 className="font-semibold">Factura {detalle.factura.numero}</h2>
-                <div className="text-sm text-slate-500">{detalle.factura.fecha} - Estado: {detalle.factura.estado}</div>
+                <div className="text-sm text-slate-500">
+                  {detalle.factura.fecha} — Estado: {detalle.factura.estado}
+                </div>
               </div>
-              <button className="btn-secondary" onClick={() => setDetalle(null)}>Cerrar</button>
+              <button className="btn-secondary" onClick={() => setDetalle(null)}>
+                Cerrar
+              </button>
             </div>
             <table className="table">
-              <thead><tr><th>Descripcion</th><th>Cant</th><th>Precio</th><th>Subtotal</th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Descripcion</th>
+                  <th>Cant</th>
+                  <th>Precio</th>
+                  <th>Subtotal</th>
+                </tr>
+              </thead>
               <tbody>
                 {detalle.detalles.map((d) => (
-                  <tr key={d.id}><td>{d.descripcion}</td><td>{d.cantidad}</td><td>{Number(d.precio_unitario).toFixed(2)}</td><td>{Number(d.subtotal).toFixed(2)}</td></tr>
+                  <tr key={d.id}>
+                    <td>{d.descripcion}</td>
+                    <td>{d.cantidad}</td>
+                    <td>${Number(d.precio_unitario).toFixed(2)}</td>
+                    <td>${Number(d.subtotal).toFixed(2)}</td>
+                  </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr><td colSpan={3} className="text-right font-medium">Subtotal</td><td>{Number(detalle.factura.subtotal).toFixed(2)}</td></tr>
-                <tr><td colSpan={3} className="text-right font-medium">IVA</td><td>{Number(detalle.factura.iva).toFixed(2)}</td></tr>
-                <tr><td colSpan={3} className="text-right font-semibold">Total</td><td className="font-semibold">{Number(detalle.factura.total).toFixed(2)}</td></tr>
+                <tr>
+                  <td colSpan={3} className="text-right font-medium">
+                    Subtotal
+                  </td>
+                  <td>${Number(detalle.factura.subtotal).toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td colSpan={3} className="text-right font-medium">
+                    IVA
+                  </td>
+                  <td>${Number(detalle.factura.iva).toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td colSpan={3} className="text-right font-semibold">
+                    Total
+                  </td>
+                  <td className="font-semibold">${Number(detalle.factura.total).toFixed(2)}</td>
+                </tr>
               </tfoot>
             </table>
             <h3 className="font-semibold">Pagos</h3>
@@ -181,18 +558,51 @@ export default function Facturacion() {
               <div className="text-sm text-slate-500">Sin pagos registrados</div>
             ) : (
               <table className="table">
-                <thead><tr><th>Fecha</th><th>Metodo</th><th>Monto</th><th>Referencia</th></tr></thead>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Metodo</th>
+                    <th>Monto</th>
+                    <th>Referencia</th>
+                  </tr>
+                </thead>
                 <tbody>
                   {detalle.pagos.map((p) => (
-                    <tr key={p.id}><td>{p.fecha}</td><td>{p.metodo}</td><td>{Number(p.monto).toFixed(2)}</td><td>{p.referencia ?? "-"}</td></tr>
+                    <tr key={p.id}>
+                      <td>{p.fecha}</td>
+                      <td>{p.metodo}</td>
+                      <td>${Number(p.monto).toFixed(2)}</td>
+                      <td>{p.referencia ?? "-"}</td>
+                    </tr>
                   ))}
                 </tbody>
               </table>
             )}
             <div className="flex justify-end gap-2 pt-2">
-              {detalle.factura.estado === "pendiente" && <button className="btn" onClick={() => pagar(detalle.factura.id)}>Registrar pago</button>}
-              {detalle.factura.estado !== "anulada" && <button className="btn-danger" onClick={() => anular(detalle.factura.id)}>Anular</button>}
-              <a className="btn-secondary" target="_blank" rel="noreferrer" href={`/facturas/${detalle.factura.id}/print`}>Imprimir / PDF</a>
+              {detalle.factura.estado === "pendiente" && (
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setDetalle(null);
+                    abrirPago(detalle.factura.id, detalle.factura.total);
+                  }}
+                >
+                  Registrar pago
+                </button>
+              )}
+              {detalle.factura.estado !== "anulada" && (
+                <button className="btn-danger" onClick={() => anular(detalle.factura.id)}>
+                  Anular
+                </button>
+              )}
+              <a
+                className="btn-secondary"
+                target="_blank"
+                rel="noreferrer"
+                href={`/facturas/${detalle.factura.id}/print`}
+              >
+                Imprimir / PDF
+              </a>
             </div>
           </div>
         </div>
