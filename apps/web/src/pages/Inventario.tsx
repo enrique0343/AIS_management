@@ -48,24 +48,59 @@ export default function Inventario() {
           observaciones: opForm.observaciones || null,
         });
       } else if (op === "ajuste") {
-        await api.post("/api/inventario/ajustes", {
+        const cant = Number(opForm.cantidad);
+        const prod = prods.find((p) => p.id === Number(opForm.producto_id));
+        const reqLote = prod?.requiere_lote_vencimiento === 1;
+        const payload: any = {
           producto_id: Number(opForm.producto_id),
           area_id: Number(opForm.area_id),
-          cantidad: Number(opForm.cantidad),
+          cantidad: cant,
           observaciones: opForm.observaciones,
-        });
+        };
+        if (reqLote) {
+          if (opForm.lote_modo === "existente") {
+            if (!opForm.lote_id) { alert("Seleccione el lote"); return; }
+            payload.lote_id = Number(opForm.lote_id);
+          } else if (opForm.lote_modo === "nuevo") {
+            if (cant < 0) { alert("No se puede crear lote nuevo con cantidad negativa"); return; }
+            if (!opForm.lote_numero || !opForm.fecha_vencimiento) {
+              alert("Numero de lote y fecha de vencimiento requeridos"); return;
+            }
+            payload.lote_numero = opForm.lote_numero;
+            payload.fecha_vencimiento = opForm.fecha_vencimiento;
+          } else {
+            alert("Esta categoria requiere lote/vencimiento. Selecciona lote existente o crea uno nuevo.");
+            return;
+          }
+        }
+        await api.post("/api/inventario/ajustes", payload);
       }
       setOp(null);
       setOpForm({});
-      // recargar tab activo
+      setLotesAjuste([]);
       if (tab === "stock") {
-        const url = "/api/inventario/stock";
+        const url = areaId ? `/api/inventario/stock?area_id=${areaId}` : "/api/inventario/stock";
         api.get<{ data: Stock[] }>(url).then((r) => setStock(r.data));
       }
     } catch (e: any) {
       alert(e.message);
     }
   };
+
+  // Cargar lotes disponibles del producto en el area seleccionada para el ajuste
+  const [lotesAjuste, setLotesAjuste] = useState<any[]>([]);
+  useEffect(() => {
+    if (op === "ajuste" && opForm.producto_id && opForm.area_id) {
+      api.get<{ data: any[] }>(`/api/productos/${opForm.producto_id}/lotes-disponibles?area_id=${opForm.area_id}`)
+        .then((r) => setLotesAjuste(r.data))
+        .catch(() => setLotesAjuste([]));
+    } else {
+      setLotesAjuste([]);
+    }
+  }, [op, opForm.producto_id, opForm.area_id]);
+
+  const productoSel = prods.find((p) => p.id === Number(opForm.producto_id));
+  const ajusteRequiereLote = op === "ajuste" && productoSel?.requiere_lote_vencimiento === 1;
   const [stock, setStock] = useState<Stock[]>([]);
   const [val, setVal] = useState<{ data: Val[]; total: number }>({ data: [], total: 0 });
   const [movs, setMovs] = useState<any[]>([]);
@@ -107,42 +142,119 @@ export default function Inventario() {
 
       {op && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="card w-full max-w-md space-y-3">
+          <div className="card w-full max-w-md space-y-3 max-h-[90vh] overflow-auto">
             <h2 className="font-semibold capitalize">{op}</h2>
-            <select className="input" value={opForm.producto_id ?? ""} onChange={(e) => setOpForm({ ...opForm, producto_id: e.target.value })}>
-              <option value="">-- Producto --</option>
-              {prods.map((p) => <option key={p.id} value={p.id}>{p.codigo} - {p.nombre}</option>)}
-            </select>
+
+            <div>
+              <label className="text-xs font-medium">Producto</label>
+              <select className="input" value={opForm.producto_id ?? ""} onChange={(e) => setOpForm({ ...opForm, producto_id: e.target.value, lote_id: "", lote_modo: "" })}>
+                <option value="">-- Seleccionar --</option>
+                {prods.map((p) => <option key={p.id} value={p.id}>{p.codigo} - {p.nombre}</option>)}
+              </select>
+            </div>
+
             {op === "transferencia" ? (
               <>
-                <select className="input" value={opForm.area_origen_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_origen_id: e.target.value })}>
-                  <option value="">-- Area origen --</option>
-                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                </select>
-                <select className="input" value={opForm.area_destino_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_destino_id: e.target.value })}>
-                  <option value="">-- Area destino --</option>
-                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                </select>
+                <div>
+                  <label className="text-xs font-medium">Area origen</label>
+                  <select className="input" value={opForm.area_origen_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_origen_id: e.target.value })}>
+                    <option value="">-- Seleccionar --</option>
+                    {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Area destino</label>
+                  <select className="input" value={opForm.area_destino_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_destino_id: e.target.value })}>
+                    <option value="">-- Seleccionar --</option>
+                    {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                  </select>
+                </div>
               </>
             ) : (
-              <select className="input" value={opForm.area_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_id: e.target.value })}>
-                <option value="">-- Area --</option>
-                {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-              </select>
+              <div>
+                <label className="text-xs font-medium">Area</label>
+                <select className="input" value={opForm.area_id ?? ""} onChange={(e) => setOpForm({ ...opForm, area_id: e.target.value, lote_id: "" })}>
+                  <option value="">-- Seleccionar --</option>
+                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                </select>
+              </div>
             )}
-            <input className="input" type="number" step="0.01" placeholder={op === "ajuste" ? "Cantidad (+/-)" : "Cantidad"} value={opForm.cantidad ?? ""} onChange={(e) => setOpForm({ ...opForm, cantidad: e.target.value })} />
+
+            <div>
+              <label className="text-xs font-medium">{op === "ajuste" ? "Cantidad (+/-)" : "Cantidad"}</label>
+              <input className="input" type="number" step="0.01" value={opForm.cantidad ?? ""} onChange={(e) => setOpForm({ ...opForm, cantidad: e.target.value })} />
+              {op === "ajuste" && <p className="text-xs text-slate-500">Positivo agrega stock, negativo lo reduce.</p>}
+            </div>
+
+            {/* Lote para AJUSTE de productos que requieren lote/vencimiento */}
+            {ajusteRequiereLote && (
+              <div className="border rounded p-2 space-y-2 bg-amber-50">
+                <p className="text-xs font-medium text-amber-800">
+                  Esta categoria requiere lote y fecha de vencimiento.
+                </p>
+                <div className="flex gap-2 text-sm">
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      checked={opForm.lote_modo === "existente"}
+                      onChange={() => setOpForm({ ...opForm, lote_modo: "existente" })}
+                    /> Lote existente
+                  </label>
+                  <label className="flex items-center gap-1">
+                    <input
+                      type="radio"
+                      checked={opForm.lote_modo === "nuevo"}
+                      onChange={() => setOpForm({ ...opForm, lote_modo: "nuevo" })}
+                      disabled={Number(opForm.cantidad) < 0}
+                    /> Crear lote nuevo
+                  </label>
+                </div>
+                {opForm.lote_modo === "existente" && (
+                  <select className="input" value={opForm.lote_id ?? ""} onChange={(e) => setOpForm({ ...opForm, lote_id: e.target.value })}>
+                    <option value="">-- Lote en stock --</option>
+                    {lotesAjuste.length === 0 && <option disabled>No hay lotes con stock en este area</option>}
+                    {lotesAjuste.map((l) => (
+                      <option key={l.lote_id ?? "null"} value={l.lote_id ?? ""}>
+                        {l.numero_lote ?? "(sin lote)"} - vence {l.fecha_vencimiento ?? "-"} - stock {l.cantidad}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {opForm.lote_modo === "nuevo" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs">Numero de lote</label>
+                      <input className="input" value={opForm.lote_numero ?? ""} onChange={(e) => setOpForm({ ...opForm, lote_numero: e.target.value })} />
+                    </div>
+                    <div>
+                      <label className="text-xs">Vencimiento</label>
+                      <input className="input" type="date" value={opForm.fecha_vencimiento ?? ""} onChange={(e) => setOpForm({ ...opForm, fecha_vencimiento: e.target.value })} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {op === "descarte" && (
-              <select className="input" value={opForm.motivo ?? "vencido"} onChange={(e) => setOpForm({ ...opForm, motivo: e.target.value })}>
-                <option value="vencido">Vencido</option>
-                <option value="deteriorado">Deteriorado</option>
-                <option value="defuncion">Defuncion</option>
-                <option value="sobrante">Sobrante</option>
-                <option value="otro">Otro</option>
-              </select>
+              <div>
+                <label className="text-xs font-medium">Motivo</label>
+                <select className="input" value={opForm.motivo ?? "vencido"} onChange={(e) => setOpForm({ ...opForm, motivo: e.target.value })}>
+                  <option value="vencido">Vencido</option>
+                  <option value="deteriorado">Deteriorado</option>
+                  <option value="defuncion">Defuncion</option>
+                  <option value="sobrante">Sobrante</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
             )}
-            <textarea className="input" placeholder={op === "ajuste" ? "Justificacion (obligatoria)" : "Observaciones"} value={opForm.observaciones ?? ""} onChange={(e) => setOpForm({ ...opForm, observaciones: e.target.value })} />
+
+            <div>
+              <label className="text-xs font-medium">{op === "ajuste" ? "Justificacion (obligatoria)" : "Observaciones"}</label>
+              <textarea className="input" value={opForm.observaciones ?? ""} onChange={(e) => setOpForm({ ...opForm, observaciones: e.target.value })} />
+            </div>
+
             <div className="flex justify-end gap-2">
-              <button className="btn-secondary" onClick={() => setOp(null)}>Cancelar</button>
+              <button className="btn-secondary" onClick={() => { setOp(null); setOpForm({}); }}>Cancelar</button>
               <button className="btn" onClick={submitOp}>Confirmar</button>
             </div>
           </div>

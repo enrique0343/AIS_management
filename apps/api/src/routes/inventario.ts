@@ -234,14 +234,65 @@ app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) 
   return c.json({ ok: true });
 });
 
-// Ajuste manual (con justificacion auditada)
+// Ajuste manual (con justificacion auditada).
+// Para categorias con requiere_lote_vencimiento=1 exige lote:
+//   - Ajuste positivo: lote_id existente, O bien lote_numero + fecha_vencimiento (crea lote)
+//   - Ajuste negativo: lote_id existente obligatorio
 app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) => {
   const b = await c.req.json().catch(() => null);
   if (!b?.producto_id || !b?.area_id || b?.cantidad === undefined || !b?.observaciones) {
     return c.json({ error: "datos_invalidos_o_falta_justificacion" }, 400);
   }
   const cantidad = Number(b.cantidad); // puede ser positivo o negativo
-  const loteId = b.lote_id ?? null;
+
+  // Verificar si la categoria del producto requiere lote/vencimiento
+  const prod = await c.env.DB.prepare(
+    `SELECT p.id, cat.requiere_lote_vencimiento, cat.nombre AS categoria
+       FROM producto p JOIN categoria_producto cat ON cat.id = p.categoria_id
+      WHERE p.id = ?`
+  )
+    .bind(b.producto_id)
+    .first<{ id: number; requiere_lote_vencimiento: number; categoria: string }>();
+  if (!prod) return c.json({ error: "producto_no_encontrado" }, 400);
+
+  let loteId: number | null = b.lote_id ?? null;
+
+  if (prod.requiere_lote_vencimiento === 1) {
+    if (cantidad < 0) {
+      if (!loteId) {
+        return c.json({
+          error: "lote_requerido_para_decrementar",
+          detalle: `La categoria "${prod.categoria}" exige especificar el lote al reducir stock.`,
+        }, 400);
+      }
+    } else if (cantidad > 0) {
+      // Permitir lote_id existente o crear uno nuevo con numero + vencimiento
+      if (!loteId) {
+        if (!b.lote_numero || !b.fecha_vencimiento) {
+          return c.json({
+            error: "lote_y_vencimiento_requeridos",
+            detalle: `La categoria "${prod.categoria}" exige numero de lote y fecha de vencimiento.`,
+          }, 400);
+        }
+        // Reutilizar si ya existe ese numero_lote para el producto
+        const existingLote = await c.env.DB.prepare(
+          `SELECT id FROM lote WHERE producto_id = ? AND numero_lote = ?`
+        )
+          .bind(b.producto_id, b.lote_numero)
+          .first<{ id: number }>();
+        if (existingLote) {
+          loteId = existingLote.id;
+        } else {
+          const ins = await c.env.DB.prepare(
+            `INSERT INTO lote (producto_id, numero_lote, fecha_vencimiento) VALUES (?, ?, ?)`
+          )
+            .bind(b.producto_id, b.lote_numero, b.fecha_vencimiento)
+            .run();
+          loteId = ins.meta.last_row_id as number;
+        }
+      }
+    }
+  }
 
   const ex = await c.env.DB.prepare(
     `SELECT id, cantidad FROM existencia
