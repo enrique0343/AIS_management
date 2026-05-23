@@ -3,19 +3,29 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth, hasRole } from "../lib/auth";
 import { api } from "../lib/api";
 
-const menu = [
-  { to: "/", label: "Inicio", roles: [] as string[] },
-  { to: "/atencion", label: "Atencion / Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
-  { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones" as const },
-  { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"] },
-  { to: "/enfermeria", label: "Enfermeria (consumos directos)", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
-  { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"], badge: "alta" as const },
-  { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"] },
-  { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"] },
-  { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"] },
-  { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"] },
-  { to: "/profesionales", label: "Profesionales", roles: ["admin"] },
-  { to: "/usuarios", label: "Usuarios", roles: ["admin"] },
+type MenuItem = {
+  to: string; label: string; roles: string[];
+  badge?: "requisiciones" | "alta"; group: "top" | "clinico" | "admin";
+};
+
+const menu: MenuItem[] = [
+  { to: "/", label: "Inicio", roles: [], group: "top" },
+  // Clinico
+  { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"], group: "clinico" },
+  { to: "/atencion", label: "Atencion / Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"], group: "clinico" },
+  { to: "/enfermeria", label: "Enfermeria", roles: ["admin", "enfermeria", "medico", "farmaceutico"], group: "clinico" },
+  { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"], group: "clinico" },
+  { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones", group: "clinico" },
+  // Administracion
+  { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"], badge: "alta", group: "admin" },
+  { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"], group: "admin" },
+  { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"], group: "admin" },
+  { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },
+  { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"], group: "admin" },
+  { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"], group: "admin" },
+  { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"], group: "admin" },
+  { to: "/profesionales", label: "Profesionales", roles: ["admin"], group: "admin" },
+  { to: "/usuarios", label: "Usuarios", roles: ["admin"], group: "admin" },
 ];
 
 export default function Layout() {
@@ -78,27 +88,42 @@ export default function Layout() {
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 px-4 overflow-y-auto pb-4">
-          {menu
-            .filter((m) => m.roles.length === 0 || hasRole(user, ...m.roles))
-            .map((m) => (
-              <NavLink
-                key={m.to}
-                to={m.to}
-                end={m.to === "/"}
-                className={({ isActive }) =>
-                  `flex justify-between items-center px-3 py-2 rounded text-sm ${isActive ? "bg-blue-600" : "hover:bg-slate-800"}`
-                }
-              >
-                <span>{m.label}</span>
-                {(m as any).badge === "requisiciones" && reqPend > 0 && (
-                  <span className="bg-red-500 text-white text-xs px-1.5 rounded-full">{reqPend}</span>
+        <nav className="flex-1 px-3 overflow-y-auto pb-4">
+          {(["top", "clinico", "admin"] as const).map((group) => {
+            const items = menu.filter((m) =>
+              m.group === group && (m.roles.length === 0 || hasRole(user, ...m.roles))
+            );
+            if (!items.length) return null;
+            return (
+              <div key={group} className="mb-3">
+                {group !== "top" && (
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 px-3 pt-3 pb-1">
+                    {group === "clinico" ? "Clinico" : "Administracion"}
+                  </div>
                 )}
-                {(m as any).badge === "alta" && altaPend > 0 && (
-                  <span className="bg-amber-500 text-white text-xs px-1.5 rounded-full">{altaPend}</span>
-                )}
-              </NavLink>
-            ))}
+                <div className="space-y-0.5">
+                  {items.map((m) => (
+                    <NavLink
+                      key={m.to}
+                      to={m.to}
+                      end={m.to === "/"}
+                      className={({ isActive }) =>
+                        `flex justify-between items-center px-3 py-2 rounded text-sm ${isActive ? "bg-blue-600" : "hover:bg-slate-800"}`
+                      }
+                    >
+                      <span>{m.label}</span>
+                      {m.badge === "requisiciones" && reqPend > 0 && (
+                        <span className="bg-red-500 text-white text-xs px-1.5 rounded-full">{reqPend}</span>
+                      )}
+                      {m.badge === "alta" && altaPend > 0 && (
+                        <span className="bg-amber-500 text-white text-xs px-1.5 rounded-full">{altaPend}</span>
+                      )}
+                    </NavLink>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
         </nav>
 
         <div className="mt-auto p-4 border-t border-slate-700 text-xs">
