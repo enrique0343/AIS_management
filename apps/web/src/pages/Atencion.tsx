@@ -54,6 +54,7 @@ export default function Atencion() {
   const [productos, setProductos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
   const [cargoForm, setCargoForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1, observaciones: "", prioridad: "normal" });
+  const [reqLineas, setReqLineas] = useState<{ producto_id: string; cantidad: number }[]>([{ producto_id: "", cantidad: 1 }]);
 
   // Hospitalizar modal
   const [showHosp, setShowHosp] = useState(false);
@@ -95,19 +96,24 @@ export default function Atencion() {
     const r = await api.get<{ data: any[] }>(`/api/productos?categoria_prefijo=${cargoConfig[tipo].prefijos}`);
     setProductos(r.data);
     setCargoForm({ producto_id: "", area_id: "", cantidad: 1, observaciones: "", prioridad: "normal" });
+    setReqLineas([{ producto_id: "", cantidad: 1 }]);
   };
 
   const submitCargo = async () => {
-    if (!sel || !cargo || !cargoForm.producto_id) { alert("Producto requerido"); return; }
+    if (!sel || !cargo) return;
     try {
       if (cargoConfig[cargo].tipo === "requisicion") {
+        const detalles = reqLineas
+          .filter((l) => l.producto_id && Number(l.cantidad) > 0)
+          .map((l) => ({ producto_id: Number(l.producto_id), cantidad_solicitada: Number(l.cantidad) }));
+        if (!detalles.length) { alert("Agrega al menos un producto con cantidad."); return; }
         await api.post("/api/requisiciones", {
           paciente_id: sel.id,
           episodio_id: sel.episodio_id,
           area_solicitante_id: cargoForm.area_id ? Number(cargoForm.area_id) : null,
           prioridad: cargoForm.prioridad ?? "normal",
           observaciones: cargoForm.observaciones || null,
-          detalles: [{ producto_id: Number(cargoForm.producto_id), cantidad_solicitada: Number(cargoForm.cantidad) }],
+          detalles,
         });
         alert("Requisicion enviada a farmacia interna.");
       } else {
@@ -465,62 +471,115 @@ export default function Atencion() {
             </div>
             <p className="text-xs text-slate-500">{cargoConfig[cargo].descripcion}</p>
 
-            <div>
-              <label className="text-xs font-medium">Producto</label>
-              <select className="input" value={cargoForm.producto_id} onChange={(e) => setCargoForm({ ...cargoForm, producto_id: e.target.value })}>
-                <option value="">-- Seleccionar --</option>
-                {productos.map((p) => (
-                  <option key={p.id} value={p.id}>{p.codigo} - {p.nombre} (${Number(p.precio_venta).toFixed(2)})</option>
-                ))}
-              </select>
-            </div>
-
-            {cargoConfig[cargo].tipo === "cargo" && (
-              <div>
-                <label className="text-xs font-medium">Area donde se presta el servicio</label>
-                <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
-                  <option value="">-- Seleccionar --</option>
-                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                </select>
-              </div>
-            )}
-
-            {cargoConfig[cargo].tipo === "requisicion" && (
+            {cargoConfig[cargo].tipo === "cargo" ? (
               <>
                 <div>
-                  <label className="text-xs font-medium">Area solicitante (opcional)</label>
+                  <label className="text-xs font-medium">Producto</label>
+                  <select className="input" value={cargoForm.producto_id} onChange={(e) => setCargoForm({ ...cargoForm, producto_id: e.target.value })}>
+                    <option value="">-- Seleccionar --</option>
+                    {productos.map((p) => (
+                      <option key={p.id} value={p.id}>{p.codigo} - {p.nombre} (${Number(p.precio_venta).toFixed(2)})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Area donde se presta el servicio</label>
                   <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
-                    <option value="">-- No especificada --</option>
+                    <option value="">-- Seleccionar --</option>
                     {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-medium">Prioridad</label>
-                  <select className="input" value={cargoForm.prioridad ?? "normal"} onChange={(e) => setCargoForm({ ...cargoForm, prioridad: e.target.value })}>
-                    <option value="normal">Normal</option>
-                    <option value="urgente">Urgente</option>
-                    <option value="stat">STAT (inmediato)</option>
-                  </select>
+                  <label className="text-xs font-medium">Cantidad</label>
+                  <input className="input" type="number" step="0.01" value={cargoForm.cantidad} onChange={(e) => setCargoForm({ ...cargoForm, cantidad: e.target.value })} />
                 </div>
+                <div>
+                  <label className="text-xs font-medium">Observaciones</label>
+                  <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
+                </div>
+                <p className="text-xs text-slate-500">Servicio: se registra como cargo directo al paciente. No descuenta stock.</p>
               </>
-            )}
-
-            <div>
-              <label className="text-xs font-medium">Cantidad</label>
-              <input className="input" type="number" step="0.01" value={cargoForm.cantidad} onChange={(e) => setCargoForm({ ...cargoForm, cantidad: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-xs font-medium">Observaciones</label>
-              <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
-            </div>
-
-            {cargoConfig[cargo].tipo === "requisicion" ? (
-              <p className="text-xs text-amber-700">
-                Esta solicitud llegara a la bandeja de farmacia interna. Farmacia validara el lote y despachara.
-                El cargo al paciente se registra automaticamente al despachar.
-              </p>
             ) : (
-              <p className="text-xs text-slate-500">Servicio: se registra como cargo directo al paciente. No descuenta stock.</p>
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium">Area solicitante (opcional)</label>
+                    <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
+                      <option value="">-- No especificada --</option>
+                      {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">Prioridad</label>
+                    <select className="input" value={cargoForm.prioridad ?? "normal"} onChange={(e) => setCargoForm({ ...cargoForm, prioridad: e.target.value })}>
+                      <option value="normal">Normal</option>
+                      <option value="urgente">Urgente</option>
+                      <option value="stat">STAT (inmediato)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium">Productos solicitados</label>
+                    <button
+                      className="text-xs text-emerald-700 font-medium hover:underline"
+                      onClick={() => setReqLineas([...reqLineas, { producto_id: "", cantidad: 1 }])}
+                    >
+                      + Agregar producto
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {reqLineas.map((linea, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <select
+                          className="input flex-1"
+                          value={linea.producto_id}
+                          onChange={(e) => {
+                            const copia = [...reqLineas];
+                            copia[idx] = { ...copia[idx], producto_id: e.target.value };
+                            setReqLineas(copia);
+                          }}
+                        >
+                          <option value="">-- Seleccionar --</option>
+                          {productos.map((p) => (
+                            <option key={p.id} value={p.id}>{p.codigo} - {p.nombre}</option>
+                          ))}
+                        </select>
+                        <input
+                          className="input w-20 text-center"
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={linea.cantidad}
+                          onChange={(e) => {
+                            const copia = [...reqLineas];
+                            copia[idx] = { ...copia[idx], cantidad: Number(e.target.value) };
+                            setReqLineas(copia);
+                          }}
+                        />
+                        {reqLineas.length > 1 && (
+                          <button
+                            className="text-red-500 hover:text-red-700 text-lg leading-none px-1"
+                            onClick={() => setReqLineas(reqLineas.filter((_, i) => i !== idx))}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium">Observaciones</label>
+                  <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
+                </div>
+                <p className="text-xs text-amber-700">
+                  Esta solicitud llegara a la bandeja de farmacia interna. Farmacia validara el lote y despachara.
+                  El cargo al paciente se registra automaticamente al despachar.
+                </p>
+              </>
             )}
 
             <div className="flex justify-end gap-2">

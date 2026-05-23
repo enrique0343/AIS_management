@@ -67,7 +67,11 @@ function PanelRequisiciones({ onChange }: { onChange: () => void }) {
 
   const load = () => api.get<{ data: any[] }>(`/api/requisiciones?estado=${estado}`).then((r) => setItems(r.data));
   useEffect(() => { load(); }, [estado]);
-  useEffect(() => { loadConteos(); }, []);
+  useEffect(() => {
+    loadConteos();
+    const t = setInterval(loadConteos, 30000);
+    return () => clearInterval(t);
+  }, []);
 
   const abrir = async (id: number) => {
     const r = await api.get<any>(`/api/requisiciones/${id}`);
