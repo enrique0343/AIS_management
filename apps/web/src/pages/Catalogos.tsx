@@ -41,19 +41,38 @@ function Proveedores() {
   const load = () => api.get<{ data: any[] }>("/api/catalogos/proveedores").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
   const submit = async () => {
-    if (!form.nombre) return;
+    if (!form.nombre) { alert("Nombre requerido"); return; }
     await api.post("/api/catalogos/proveedores", form);
     setForm({ nombre: "", nit: "", contacto: "", telefono: "", email: "", condiciones_pago: "" });
     load();
   };
   return (
     <Section>
-      <div className="grid grid-cols-6 gap-2 mb-3">
-        <input className="input col-span-2" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
-        <input className="input" placeholder="NIT" value={form.nit} onChange={(e) => setForm({ ...form, nit: e.target.value })} />
-        <input className="input" placeholder="Contacto" value={form.contacto} onChange={(e) => setForm({ ...form, contacto: e.target.value })} />
-        <input className="input" placeholder="Telefono" value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
-        <button className="btn" onClick={submit}>+ Agregar</button>
+      <h3 className="font-semibold mb-2">Nuevo proveedor</h3>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-3">
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-slate-700">Nombre *</label>
+          <input className="input" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">NIT</label>
+          <input className="input" value={form.nit} onChange={(e) => setForm({ ...form, nit: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Contacto</label>
+          <input className="input" value={form.contacto} onChange={(e) => setForm({ ...form, contacto: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Telefono</label>
+          <input className="input" value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Email</label>
+          <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        </div>
+      </div>
+      <div className="flex justify-end mb-3">
+        <button className="btn" onClick={submit}>+ Agregar proveedor</button>
       </div>
       <table className="table">
         <thead><tr><th>Nombre</th><th>NIT</th><th>Contacto</th><th>Telefono</th><th>Email</th></tr></thead>
@@ -71,17 +90,26 @@ function Laboratorios() {
   const load = () => api.get<{ data: any[] }>("/api/catalogos/laboratorios").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
   const submit = async () => {
-    if (!form.nombre) return;
+    if (!form.nombre) { alert("Nombre requerido"); return; }
     await api.post("/api/catalogos/laboratorios", form);
     setForm({ nombre: "", pais: "" });
     load();
   };
   return (
     <Section>
-      <div className="grid grid-cols-6 gap-2 mb-3">
-        <input className="input col-span-3" placeholder="Nombre laboratorio" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
-        <input className="input col-span-2" placeholder="Pais" value={form.pais} onChange={(e) => setForm({ ...form, pais: e.target.value })} />
-        <button className="btn" onClick={submit}>+ Agregar</button>
+      <h3 className="font-semibold mb-2">Nuevo laboratorio / fabricante</h3>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+        <div className="md:col-span-3">
+          <label className="text-xs font-medium text-slate-700">Nombre *</label>
+          <input className="input" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-slate-700">Pais</label>
+          <input className="input" value={form.pais} onChange={(e) => setForm({ ...form, pais: e.target.value })} />
+        </div>
+      </div>
+      <div className="flex justify-end mb-3">
+        <button className="btn" onClick={submit}>+ Agregar laboratorio</button>
       </div>
       <table className="table">
         <thead><tr><th>Nombre</th><th>Pais</th></tr></thead>
@@ -98,20 +126,33 @@ function Areas() {
   const load = () => api.get<{ data: any[] }>("/api/catalogos/areas").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
   const submit = async () => {
-    if (!form.nombre) return;
+    if (!form.nombre) { alert("Nombre requerido"); return; }
     await api.post("/api/catalogos/areas", form);
     setForm({ nombre: "", tipo: "servicio", bajo_llave: false });
     load();
   };
   return (
     <Section>
-      <div className="grid grid-cols-6 gap-2 mb-3">
-        <input className="input col-span-2" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
-        <select className="input col-span-2" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-          {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.bajo_llave} onChange={(e) => setForm({ ...form, bajo_llave: e.target.checked })} /> Bajo llave</label>
-        <button className="btn" onClick={submit}>+ Agregar</button>
+      <h3 className="font-semibold mb-2">Nueva area</h3>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-slate-700">Nombre *</label>
+          <input className="input" placeholder="ej. Farmacia Pediatria" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-slate-700">Tipo</label>
+          <select className="input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+            {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div className="flex items-end">
+          <label className="flex items-center gap-2 text-sm h-10">
+            <input type="checkbox" checked={form.bajo_llave} onChange={(e) => setForm({ ...form, bajo_llave: e.target.checked })} /> Bajo llave
+          </label>
+        </div>
+      </div>
+      <div className="flex justify-end mb-3">
+        <button className="btn" onClick={submit}>+ Agregar area</button>
       </div>
       <table className="table">
         <thead><tr><th>Nombre</th><th>Tipo</th><th>Bajo llave</th></tr></thead>
@@ -127,26 +168,44 @@ function Habitaciones() {
   const load = () => api.get<{ data: any[] }>("/api/habitaciones").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
   const submit = async () => {
-    if (!form.numero) return;
+    if (!form.numero) { alert("Numero de habitacion requerido"); return; }
     await api.post("/api/habitaciones", form);
     setForm({ numero: "", tipo: "individual", precio_diario: 0, capacidad: 1, ubicacion: "" });
     load();
   };
   return (
     <Section>
-      <div className="grid grid-cols-7 gap-2 mb-3">
-        <input className="input" placeholder="Numero" value={form.numero} onChange={(e) => setForm({ ...form, numero: e.target.value })} />
-        <select className="input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-          <option value="individual">individual</option>
-          <option value="doble">doble</option>
-          <option value="suite">suite</option>
-          <option value="uci">uci</option>
-          <option value="observacion">observacion</option>
-        </select>
-        <input className="input" type="number" step="0.01" placeholder="Precio diario" value={form.precio_diario} onChange={(e) => setForm({ ...form, precio_diario: e.target.value })} />
-        <input className="input" type="number" placeholder="Capacidad" value={form.capacidad} onChange={(e) => setForm({ ...form, capacidad: e.target.value })} />
-        <input className="input col-span-2" placeholder="Ubicacion" value={form.ubicacion} onChange={(e) => setForm({ ...form, ubicacion: e.target.value })} />
-        <button className="btn" onClick={submit}>+ Agregar</button>
+      <h3 className="font-semibold mb-2">Nueva habitacion</h3>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-3">
+        <div>
+          <label className="text-xs font-medium text-slate-700">Numero / nombre *</label>
+          <input className="input" placeholder="ej. 201" value={form.numero} onChange={(e) => setForm({ ...form, numero: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Tipo</label>
+          <select className="input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+            <option value="individual">individual</option>
+            <option value="doble">doble</option>
+            <option value="suite">suite</option>
+            <option value="uci">uci</option>
+            <option value="observacion">observacion</option>
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Precio por dia ($)</label>
+          <input className="input" type="number" step="0.01" min="0" value={form.precio_diario} onChange={(e) => setForm({ ...form, precio_diario: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Capacidad (camas)</label>
+          <input className="input" type="number" min="1" value={form.capacidad} onChange={(e) => setForm({ ...form, capacidad: e.target.value })} />
+        </div>
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-slate-700">Ubicacion (opcional)</label>
+          <input className="input" placeholder="ej. Piso 2, ala norte" value={form.ubicacion} onChange={(e) => setForm({ ...form, ubicacion: e.target.value })} />
+        </div>
+      </div>
+      <div className="flex justify-end mb-3">
+        <button className="btn" onClick={submit}>+ Agregar habitacion</button>
       </div>
       <table className="table">
         <thead><tr><th>Numero</th><th>Tipo</th><th>Precio/dia</th><th>Cap.</th><th>Ocupantes</th><th>Pacientes</th><th>Activa</th></tr></thead>
@@ -180,14 +239,31 @@ function Categorias() {
   };
   return (
     <Section>
-      <div className="grid grid-cols-7 gap-2 mb-3">
-        <input className="input col-span-2" placeholder="Nombre" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
-        <input className="input" placeholder="Prefijo (MED)" maxLength={5} value={form.prefijo} onChange={(e) => setForm({ ...form, prefijo: e.target.value.toUpperCase() })} />
-        <label className="flex items-center gap-2 text-sm col-span-2"><input type="checkbox" checked={form.requiere_lote_vencimiento} onChange={(e) => setForm({ ...form, requiere_lote_vencimiento: e.target.checked })} /> Requiere lote/vencimiento</label>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.es_servicio} onChange={(e) => setForm({ ...form, es_servicio: e.target.checked })} /> Es servicio</label>
-        <button className="btn" onClick={submit}>+ Agregar</button>
+      <h3 className="font-semibold mb-2">Nueva categoria de producto</h3>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-3">
+        <div className="md:col-span-2">
+          <label className="text-xs font-medium text-slate-700">Nombre *</label>
+          <input className="input" placeholder="ej. Material curacion" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
+        </div>
+        <div>
+          <label className="text-xs font-medium text-slate-700">Prefijo *</label>
+          <input className="input font-mono" placeholder="MED" maxLength={5} value={form.prefijo} onChange={(e) => setForm({ ...form, prefijo: e.target.value.toUpperCase() })} />
+          <p className="text-xs text-slate-500">Codigos: PREFIJO-0001</p>
+        </div>
+        <div className="flex items-end">
+          <label className="flex items-center gap-2 text-sm h-10">
+            <input type="checkbox" checked={form.requiere_lote_vencimiento} onChange={(e) => setForm({ ...form, requiere_lote_vencimiento: e.target.checked })} /> Requiere lote/vence
+          </label>
+        </div>
+        <div className="flex items-end">
+          <label className="flex items-center gap-2 text-sm h-10">
+            <input type="checkbox" checked={form.es_servicio} onChange={(e) => setForm({ ...form, es_servicio: e.target.checked })} /> Es servicio
+          </label>
+        </div>
       </div>
-      <p className="text-xs text-slate-500 mb-2">El prefijo define el codigo de los productos de esta categoria (ej. MED-0001).</p>
+      <div className="flex justify-end mb-3">
+        <button className="btn" onClick={submit}>+ Agregar categoria</button>
+      </div>
       <table className="table">
         <thead><tr><th>Nombre</th><th>Prefijo</th><th>Lote/Vence</th><th>Servicio</th></tr></thead>
         <tbody>{items.map((c) => (

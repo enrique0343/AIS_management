@@ -5,8 +5,7 @@ import { api } from "../lib/api";
 
 const menu = [
   { to: "/", label: "Inicio", roles: [] as string[] },
-  { to: "/atencion", label: "Atencion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
-  { to: "/hospitalizacion", label: "Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
+  { to: "/atencion", label: "Atencion / Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
   { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones" as const },
   { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"] },
   { to: "/enfermeria", label: "Enfermeria (consumos directos)", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },

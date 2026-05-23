@@ -15,7 +15,6 @@ import Profesionales from "./pages/Profesionales";
 import Usuarios from "./pages/Usuarios";
 import FacturaPrint from "./pages/FacturaPrint";
 import Atencion from "./pages/Atencion";
-import Hospitalizacion from "./pages/Hospitalizacion";
 import Gastos from "./pages/Gastos";
 import Reportes from "./pages/Reportes";
 import Farmacia from "./pages/Farmacia";
@@ -59,7 +58,7 @@ function AppRoutes() {
         <Route path="profesionales" element={<Profesionales />} />
         <Route path="usuarios" element={<Usuarios />} />
         <Route path="atencion" element={<Atencion />} />
-        <Route path="hospitalizacion" element={<Hospitalizacion />} />
+        <Route path="hospitalizacion" element={<Atencion />} />
         <Route path="gastos" element={<Gastos />} />
         <Route path="reportes" element={<Reportes />} />
         <Route path="farmacia" element={<Farmacia />} />
