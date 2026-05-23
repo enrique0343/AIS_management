@@ -40,6 +40,12 @@ app.get("/api/dashboard", async (c) => {
           WHERE EXISTS (SELECT 1 FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL)
        )`
     ).first<{ n: number }>(),
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(cp.precio_venta_snapshot * cp.cantidad), 0) AS t
+         FROM consumo_paciente cp
+         JOIN episodio_atencion e ON e.id = cp.episodio_id
+        WHERE e.estado = 'activo'`
+    ).first<{ t: number }>(),
   ]);
   return c.json({
     productos: queries[0]?.n ?? 0,
@@ -50,6 +56,7 @@ app.get("/api/dashboard", async (c) => {
     monto_pendiente: queries[4]?.t ?? 0,
     ingresos_hoy: queries[5]?.t ?? 0,
     episodios_por_facturar: queries[6]?.n ?? 0,
+    cargos_activos: queries[7]?.t ?? 0,
   });
 });
 

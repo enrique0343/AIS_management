@@ -56,6 +56,10 @@ export default function Atencion() {
   const [cargoForm, setCargoForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1, observaciones: "", prioridad: "normal" });
   const [reqLineas, setReqLineas] = useState<{ producto_id: string; cantidad: number }[]>([{ producto_id: "", cantidad: 1 }]);
 
+  // Modal de devolucion
+  const [devModal, setDevModal] = useState<{ consumoId: number; producto: string; numeroLote: string | null; fechaVenc: string | null; maxCant: number } | null>(null);
+  const [devForm, setDevForm] = useState({ cantidad: 1, area_id: "", observaciones: "" });
+
   // Hospitalizar modal
   const [showHosp, setShowHosp] = useState(false);
   const [busqPac, setBusqPac] = useState("");
@@ -132,15 +136,24 @@ export default function Atencion() {
   };
 
   // === Devolucion ===
-  const devolver = async (consumoId: number, maxCant: number, producto: string) => {
-    const cantStr = prompt(`Devolver ${producto}\nCantidad a devolver (max ${maxCant}):`, String(maxCant));
-    if (!cantStr) return;
-    const areaIdStr = prompt("Area de farmacia interna donde reingresa el stock:\n" + areas.map((a) => `${a.id}: ${a.nombre}`).join("\n"));
-    if (!areaIdStr) return;
+  const abrirDevolucion = (consumo: any) => {
+    setDevModal({ consumoId: consumo.id, producto: consumo.producto, numeroLote: consumo.numero_lote ?? null, fechaVenc: consumo.fecha_vencimiento ?? null, maxCant: consumo.cantidad });
+    setDevForm({ cantidad: consumo.cantidad, area_id: "", observaciones: "" });
+  };
+
+  const submitDevolucion = async () => {
+    if (!devModal || !devForm.area_id) { alert("Selecciona el area de farmacia"); return; }
+    if (Number(devForm.cantidad) <= 0 || Number(devForm.cantidad) > devModal.maxCant) {
+      alert(`Cantidad invalida. Maximo: ${devModal.maxCant}`); return;
+    }
     try {
-      await api.post(`/api/enfermeria/consumos/${consumoId}/devolucion`, {
-        cantidad: Number(cantStr), area_destino_id: Number(areaIdStr), observaciones: "Devolucion - no utilizado",
+      await api.post(`/api/enfermeria/consumos/${devModal.consumoId}/solicitar-devolucion`, {
+        cantidad: Number(devForm.cantidad),
+        area_destino_id: Number(devForm.area_id),
+        observaciones: devForm.observaciones || `Devolucion de ${devModal.producto} - no utilizado`,
       });
+      alert("Solicitud enviada a farmacia. El dependiente confirmara el reingreso al stock.");
+      setDevModal(null);
       refrescar();
     } catch (e: any) { alert(e.message); }
   };
@@ -355,14 +368,14 @@ export default function Atencion() {
                       <td>{c.facturado ? "Si" : "No"}</td>
                       <td>
                         {!c.facturado && !c.es_servicio && c.cantidad > 0 && (
-                          <button className="btn-secondary text-xs" onClick={() => devolver(c.id, c.cantidad, c.producto)}>Devolver</button>
+                          <button className="btn-secondary text-xs" onClick={() => abrirDevolucion(c)}>Devolver</button>
                         )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="text-xs text-slate-500">"Devolver" reingresa el producto no utilizado al stock de farmacia interna preservando el lote. Solo aplica a productos no facturados.</p>
+              <p className="text-xs text-slate-500">"Devolver" crea una solicitud pendiente en farmacia. El dependiente confirma el lote y el area antes de ajustar el inventario.</p>
             </div>
           )}
 
@@ -586,6 +599,75 @@ export default function Atencion() {
               <button className="btn-secondary" onClick={() => setCargo(null)}>Cancelar</button>
               <button className="btn" onClick={submitCargo}>
                 {cargoConfig[cargo].tipo === "requisicion" ? "Enviar a farmacia" : "Registrar cargo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de devolucion */}
+      {devModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-md space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="font-semibold">Solicitar devolucion a farmacia</h2>
+              <button className="btn-secondary text-xs" onClick={() => setDevModal(null)}>Cancelar</button>
+            </div>
+
+            {/* Info del producto y lote */}
+            <div className="rounded-lg bg-slate-50 border p-3 space-y-1 text-sm">
+              <div className="font-medium">{devModal.producto}</div>
+              <div className="flex gap-4 text-xs text-slate-600">
+                <span>
+                  <span className="text-slate-400">Lote: </span>
+                  {devModal.numeroLote
+                    ? <span className="font-mono font-semibold text-slate-800">{devModal.numeroLote}</span>
+                    : <span className="text-slate-400">Sin lote registrado</span>}
+                </span>
+                {devModal.fechaVenc && (
+                  <span><span className="text-slate-400">Vence: </span>{devModal.fechaVenc}</span>
+                )}
+              </div>
+              <div className="text-xs text-amber-700 mt-1">
+                Farmacia verificara el lote al procesar el reingreso. Si existe algun error, el dependiente podra corregirlo.
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Cantidad a devolver (max {devModal.maxCant})</label>
+              <input
+                className="input"
+                type="number"
+                min="0.01"
+                step="0.01"
+                max={devModal.maxCant}
+                value={devForm.cantidad}
+                onChange={(e) => setDevForm({ ...devForm, cantidad: Number(e.target.value) })}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Area de farmacia que recibe *</label>
+              <select className="input" value={devForm.area_id} onChange={(e) => setDevForm({ ...devForm, area_id: e.target.value })}>
+                <option value="">-- Seleccionar area --</option>
+                {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Observaciones (opcional)</label>
+              <input
+                className="input"
+                placeholder="ej. Medicamento no administrado"
+                value={devForm.observaciones}
+                onChange={(e) => setDevForm({ ...devForm, observaciones: e.target.value })}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button className="btn-secondary" onClick={() => setDevModal(null)}>Cancelar</button>
+              <button className="btn" onClick={submitDevolucion} disabled={!devForm.area_id}>
+                Enviar solicitud a farmacia
               </button>
             </div>
           </div>

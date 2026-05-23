@@ -243,7 +243,22 @@ export default function Quirofano() {
           {vista === "dia" && (
             <div className="flex gap-1 items-center">
               <button className="btn-secondary text-xs" onClick={() => moverDia(-1)}>&laquo;</button>
-              <span className="text-xs px-2 font-medium">{fmtDiaLegible(diaBase)}</span>
+              <input
+                type="date"
+                className="input text-sm py-1 w-36"
+                value={fmtDia(diaBase)}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const [y, m, d] = e.target.value.split("-").map(Number);
+                  const nd = new Date(y, m - 1, d);
+                  setDiaBase(nd);
+                  const dow = (nd.getDay() + 6) % 7;
+                  const lunes = new Date(nd);
+                  lunes.setDate(nd.getDate() - dow);
+                  lunes.setHours(0, 0, 0, 0);
+                  setSemanaBase(lunes);
+                }}
+              />
               <button className="btn-secondary text-xs" onClick={() => moverDia(1)}>&raquo;</button>
             </div>
           )}

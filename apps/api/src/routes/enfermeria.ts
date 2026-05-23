@@ -122,10 +122,148 @@ app.post("/consumos", requireRole("admin", "enfermeria", "medico", "farmaceutico
   return c.json({ ok: true, consumos: insertedIds });
 });
 
-// Devolucion de producto no utilizado a la farmacia interna.
-// Solo aplica a consumos de productos (no servicios) que aun no estan facturados.
-// Reduce la cantidad del consumo y reingresa al stock del area destino con el
-// mismo lote (preserva trazabilidad de vencimiento).
+// ── Solicitud de devolucion (paso 1 - enfermeria) ──────────────────────────
+// Crea un registro pendiente en devolucion_pendiente sin afectar inventario.
+// Farmacia procesara o rechazara el registro en el paso 2.
+app.post(
+  "/consumos/:id/solicitar-devolucion",
+  requireRole("admin", "enfermeria", "medico", "farmaceutico"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const b = await c.req.json().catch(() => null);
+    if (!b?.cantidad || !b?.area_destino_id) {
+      return c.json({ error: "datos_invalidos", detalle: "cantidad y area_destino_id requeridos" }, 400);
+    }
+    const cantDev = Number(b.cantidad);
+    const cp = await c.env.DB.prepare(
+      `SELECT cp.id, cp.cantidad, cp.producto_id, cp.lote_id, cp.factura_detalle_id,
+              cat.es_servicio, p.nombre AS producto
+         FROM consumo_paciente cp
+         JOIN producto p ON p.id = cp.producto_id
+         JOIN categoria_producto cat ON cat.id = p.categoria_id
+        WHERE cp.id = ?`
+    ).bind(id).first<{ id: number; cantidad: number; producto_id: number; lote_id: number | null; factura_detalle_id: number | null; es_servicio: number; producto: string }>();
+    if (!cp) return c.json({ error: "consumo_no_encontrado" }, 404);
+    if (cp.factura_detalle_id) return c.json({ error: "consumo_ya_facturado_no_puede_devolverse" }, 400);
+    if (cp.es_servicio === 1) return c.json({ error: "servicios_no_se_pueden_devolver" }, 400);
+    if (cantDev <= 0 || cantDev > cp.cantidad) {
+      return c.json({ error: "cantidad_invalida", maximo_disponible: cp.cantidad }, 400);
+    }
+    const session = c.get("session")!;
+    await c.env.DB.prepare(
+      `INSERT INTO devolucion_pendiente
+         (consumo_id, producto_id, lote_id, cantidad, area_destino_id, observaciones, solicitante_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).bind(id, cp.producto_id, cp.lote_id, cantDev, b.area_destino_id, b.observaciones ?? null, session.usuario_id).run();
+    await logAudit(c.env, { usuario_id: session.usuario_id, accion: "solicitar_devolucion", entidad: "consumo_paciente", entidad_id: id, payload: { cantidad: cantDev, area_destino_id: b.area_destino_id }, ip: c.get("ip") });
+    return c.json({ ok: true });
+  }
+);
+
+// ── Listado de devoluciones pendientes (farmacia) ───────────────────────────
+app.get(
+  "/devoluciones-pendientes",
+  requireRole("admin", "jefe_farmacia_central", "farmaceutico"),
+  async (c) => {
+    const solo = c.req.query("estado") ?? "pendiente";
+    const { results } = await c.env.DB.prepare(
+      `SELECT dp.id, dp.estado, dp.cantidad, dp.observaciones, dp.created_at,
+              dp.lote_id, dp.lote_final_id, dp.area_destino_id, dp.area_final_id,
+              dp.motivo_rechazo, dp.procesado_en,
+              p.nombre AS producto, p.codigo,
+              l.numero_lote, l.fecha_vencimiento,
+              cp.episodio_id,
+              pac.nombres || ' ' || pac.apellidos AS paciente,
+              us.nombre AS solicitante,
+              ud.nombre AS procesado_por,
+              ao.nombre AS area_sugerida
+         FROM devolucion_pendiente dp
+         JOIN consumo_paciente cp ON cp.id = dp.consumo_id
+         JOIN producto p ON p.id = dp.producto_id
+         JOIN episodio_atencion ep ON ep.id = cp.episodio_id
+         JOIN paciente pac ON pac.id = ep.paciente_id
+         JOIN usuario us ON us.id = dp.solicitante_id
+         LEFT JOIN usuario ud ON ud.id = dp.procesado_por_id
+         LEFT JOIN lote l ON l.id = dp.lote_id
+         LEFT JOIN area ao ON ao.id = dp.area_destino_id
+        WHERE dp.estado = ?
+        ORDER BY dp.created_at DESC`
+    ).bind(solo).all();
+    return c.json({ data: results });
+  }
+);
+
+// ── Procesar devolucion (paso 2 - farmacia) ─────────────────────────────────
+app.post(
+  "/devoluciones/:id/procesar",
+  requireRole("admin", "jefe_farmacia_central", "farmaceutico"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const b = await c.req.json().catch(() => null);
+    const dp = await c.env.DB.prepare(
+      `SELECT dp.*, cp.area_id AS area_origen_id, cp.costo_unitario_snapshot
+         FROM devolucion_pendiente dp
+         JOIN consumo_paciente cp ON cp.id = dp.consumo_id
+        WHERE dp.id = ?`
+    ).bind(id).first<any>();
+    if (!dp) return c.json({ error: "devolucion_no_encontrada" }, 404);
+    if (dp.estado !== "pendiente") return c.json({ error: "devolucion_ya_procesada" }, 400);
+
+    const loteId    = b?.lote_id    ?? dp.lote_id;
+    const areaId    = b?.area_id    ?? dp.area_destino_id;
+    const session   = c.get("session")!;
+
+    // Reducir consumo
+    await c.env.DB.prepare(`UPDATE consumo_paciente SET cantidad = cantidad - ? WHERE id = ?`)
+      .bind(dp.cantidad, dp.consumo_id).run();
+
+    // Reingreso al stock preservando lote
+    const ex = await c.env.DB.prepare(
+      `SELECT id FROM existencia WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id,0) = COALESCE(?,0)`
+    ).bind(dp.producto_id, areaId, loteId).first<{ id: number }>();
+    if (ex) {
+      await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ?`).bind(dp.cantidad, ex.id).run();
+    } else {
+      await c.env.DB.prepare(`INSERT INTO existencia (producto_id, area_id, lote_id, cantidad) VALUES (?,?,?,?)`)
+        .bind(dp.producto_id, areaId, loteId, dp.cantidad).run();
+    }
+
+    // Movimiento de inventario
+    await c.env.DB.prepare(
+      `INSERT INTO movimiento_inventario
+         (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, costo_unitario, usuario_id, referencia_tipo, referencia_id, observaciones)
+       VALUES ('devolucion', ?, ?, ?, ?, ?, ?, ?, 'consumo', ?, ?)`
+    ).bind(dp.producto_id, loteId, dp.area_origen_id, areaId, dp.cantidad, dp.costo_unitario_snapshot, session.usuario_id, dp.consumo_id, dp.observaciones ?? "Devolucion procesada por farmacia").run();
+
+    // Marcar como procesada
+    await c.env.DB.prepare(
+      `UPDATE devolucion_pendiente SET estado='procesada', procesado_por_id=?, procesado_en=datetime('now'), lote_final_id=?, area_final_id=? WHERE id=?`
+    ).bind(session.usuario_id, loteId, areaId, id).run();
+
+    await logAudit(c.env, { usuario_id: session.usuario_id, accion: "procesar_devolucion", entidad: "devolucion_pendiente", entidad_id: id, payload: { lote_id: loteId, area_id: areaId }, ip: c.get("ip") });
+    return c.json({ ok: true });
+  }
+);
+
+// ── Rechazar devolucion (farmacia) ──────────────────────────────────────────
+app.post(
+  "/devoluciones/:id/rechazar",
+  requireRole("admin", "jefe_farmacia_central", "farmaceutico"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const b = await c.req.json().catch(() => null);
+    const dp = await c.env.DB.prepare(`SELECT id, estado FROM devolucion_pendiente WHERE id = ?`).bind(id).first<{ id: number; estado: string }>();
+    if (!dp) return c.json({ error: "devolucion_no_encontrada" }, 404);
+    if (dp.estado !== "pendiente") return c.json({ error: "devolucion_ya_procesada" }, 400);
+    const session = c.get("session")!;
+    await c.env.DB.prepare(
+      `UPDATE devolucion_pendiente SET estado='rechazada', procesado_por_id=?, procesado_en=datetime('now'), motivo_rechazo=? WHERE id=?`
+    ).bind(session.usuario_id, b?.motivo ?? null, id).run();
+    return c.json({ ok: true });
+  }
+);
+
+// ── Devolucion directa legacy (mantiene compatibilidad) ─────────────────────
 app.post(
   "/consumos/:id/devolucion",
   requireRole("admin", "enfermeria", "medico", "farmaceutico"),
