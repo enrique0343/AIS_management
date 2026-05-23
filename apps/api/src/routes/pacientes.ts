@@ -103,6 +103,74 @@ app.put("/:id", requireAuth, async (c) => {
   return c.json({ ok: true });
 });
 
+// Estado de cuenta del paciente: consumos y ocupaciones pendientes + facturados.
+// Una "ocupacion abierta" cuenta dias hasta hoy (no facturable hasta egreso).
+app.get("/:id/estado-cuenta", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const pac = await c.env.DB.prepare(`SELECT id, nombres, apellidos, expediente FROM paciente WHERE id = ?`)
+    .bind(id)
+    .first();
+  if (!pac) return c.json({ error: "no_encontrado" }, 404);
+
+  const consumos = await c.env.DB.prepare(
+    `SELECT cp.id, cp.fecha, cp.cantidad, cp.precio_venta_snapshot,
+            ROUND(cp.cantidad * cp.precio_venta_snapshot, 2) AS subtotal,
+            p.codigo, p.nombre AS producto, cat.es_servicio,
+            cp.factura_detalle_id IS NOT NULL AS facturado,
+            cp.episodio_id
+       FROM consumo_paciente cp
+       JOIN producto p ON p.id = cp.producto_id
+       JOIN categoria_producto cat ON cat.id = p.categoria_id
+       JOIN episodio_atencion e ON e.id = cp.episodio_id
+      WHERE e.paciente_id = ?
+      ORDER BY cp.fecha DESC`
+  )
+    .bind(id)
+    .all<any>();
+
+  const ocupaciones = await c.env.DB.prepare(
+    `SELECT o.id, o.fecha_ingreso, o.fecha_egreso, o.precio_diario_snapshot,
+            o.factura_detalle_id IS NOT NULL AS facturado, o.episodio_id,
+            h.numero AS habitacion, h.tipo AS habitacion_tipo,
+            -- Dias contados desde ingreso hasta egreso (o hoy si activa).
+            -- Minimo 1 dia para estancias del mismo dia.
+            MAX(
+              CAST((julianday(COALESCE(o.fecha_egreso, datetime('now'))) - julianday(o.fecha_ingreso)) AS INTEGER),
+              1
+            ) AS dias,
+            ROUND(
+              MAX(CAST((julianday(COALESCE(o.fecha_egreso, datetime('now'))) - julianday(o.fecha_ingreso)) AS INTEGER), 1)
+              * o.precio_diario_snapshot, 2
+            ) AS subtotal
+       FROM ocupacion_habitacion o
+       JOIN habitacion h ON h.id = o.habitacion_id
+      WHERE o.paciente_id = ?
+      ORDER BY o.fecha_ingreso DESC`
+  )
+    .bind(id)
+    .all<any>();
+
+  const tot = (rows: any[], cond: (r: any) => boolean) =>
+    Math.round(rows.filter(cond).reduce((s, r) => s + Number(r.subtotal), 0) * 100) / 100;
+
+  const cons = consumos.results ?? [];
+  const ocup = ocupaciones.results ?? [];
+
+  return c.json({
+    paciente: pac,
+    consumos: cons,
+    ocupaciones: ocup,
+    totales: {
+      consumos_pendientes: tot(cons, (r) => !r.facturado),
+      consumos_facturados: tot(cons, (r) => !!r.facturado),
+      // Solo ocupaciones cerradas son facturables
+      habitacion_pendiente: tot(ocup, (r) => !r.facturado && r.fecha_egreso),
+      habitacion_en_curso: tot(ocup, (r) => !r.facturado && !r.fecha_egreso),
+      habitacion_facturado: tot(ocup, (r) => !!r.facturado),
+    },
+  });
+});
+
 // Listar episodios (filtrables por estado / paciente)
 app.get("/episodios/list", async (c) => {
   const estado = c.req.query("estado");

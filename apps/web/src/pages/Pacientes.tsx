@@ -23,12 +23,43 @@ export default function Pacientes() {
   const [q, setQ] = useState("");
   const [show, setShow] = useState(false);
   const [detalle, setDetalle] = useState<{ paciente: Pac; episodios: Episodio[] } | null>(null);
+  const [ocupaciones, setOcupaciones] = useState<any[]>([]);
+  const [estado, setEstado] = useState<any | null>(null);
+  const [habitaciones, setHabitaciones] = useState<any[]>([]);
   const [form, setForm] = useState<any>({ nombres: "", apellidos: "", documento_tipo: "dui", documento_numero: "", sexo: "M" });
 
   const load = () => api.get<{ data: Pac[] }>(`/api/pacientes${q ? `?q=${encodeURIComponent(q)}` : ""}`).then((r) => setItems(r.data));
   const abrir = async (id: number) => {
     const r = await api.get<{ paciente: Pac; episodios: Episodio[] }>(`/api/pacientes/${id}`);
     setDetalle(r);
+    api.get<{ data: any[] }>(`/api/habitaciones/paciente/${id}`).then((rr) => setOcupaciones(rr.data));
+    api.get<any>(`/api/pacientes/${id}/estado-cuenta`).then(setEstado);
+    api.get<{ data: any[] }>(`/api/habitaciones`).then((rr) => setHabitaciones(rr.data));
+  };
+
+  const asignarHab = async () => {
+    if (!detalle) return;
+    const disponibles = habitaciones.filter((h) => h.activa && h.ocupantes_actuales < h.capacidad);
+    if (!disponibles.length) { alert("No hay habitaciones disponibles"); return; }
+    const opts = disponibles.map((h) => `${h.id}: ${h.numero} (${h.tipo}, $${h.precio_diario}/dia, ${h.ocupantes_actuales}/${h.capacidad})`).join("\n");
+    const id = prompt(`Habitacion ID:\n${opts}`);
+    if (!id) return;
+    const epActivo = detalle.episodios.find((e) => e.estado === "activo");
+    try {
+      await api.post("/api/habitaciones/asignar", {
+        paciente_id: detalle.paciente.id,
+        habitacion_id: Number(id),
+        episodio_id: epActivo?.id ?? null,
+      });
+      abrir(detalle.paciente.id);
+    } catch (e: any) { alert(e.message); }
+  };
+
+  const egresarHab = async (ocupId: number) => {
+    if (!detalle) return;
+    if (!confirm("Egresar de la habitacion? Quedara facturable.")) return;
+    await api.post(`/api/habitaciones/ocupacion/${ocupId}/egresar`, {});
+    abrir(detalle.paciente.id);
   };
 
   useEffect(() => { load(); }, []);
@@ -112,7 +143,7 @@ export default function Pacientes() {
 
       {detalle && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
-          <div className="card w-full max-w-2xl space-y-3 max-h-[90vh] overflow-auto">
+          <div className="card w-full max-w-4xl space-y-3 max-h-[90vh] overflow-auto">
             <div className="flex justify-between items-start">
               <div>
                 <h2 className="font-semibold text-lg">{detalle.paciente.nombres} {detalle.paciente.apellidos}</h2>
@@ -151,6 +182,71 @@ export default function Pacientes() {
                   ))}
                 </tbody>
               </table>
+            )}
+
+            <div className="flex justify-between items-center pt-2 border-t">
+              <h3 className="font-semibold">Habitacion</h3>
+              <button className="btn text-xs" onClick={asignarHab}>+ Asignar habitacion</button>
+            </div>
+            {!ocupaciones.length ? (
+              <div className="text-sm text-slate-500">Sin asignaciones de habitacion</div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>Habitacion</th><th>Tipo</th><th>Ingreso</th><th>Egreso</th><th>$/dia</th><th>Facturado</th><th></th></tr></thead>
+                <tbody>
+                  {ocupaciones.map((o) => (
+                    <tr key={o.id} className={!o.fecha_egreso ? "bg-blue-50" : ""}>
+                      <td>{o.habitacion_numero}</td>
+                      <td>{o.habitacion_tipo}</td>
+                      <td className="text-xs">{o.fecha_ingreso}</td>
+                      <td className="text-xs">{o.fecha_egreso ?? <span className="text-blue-600">activa</span>}</td>
+                      <td>{Number(o.precio_diario_snapshot).toFixed(2)}</td>
+                      <td>{o.factura_detalle_id ? "Si" : "No"}</td>
+                      <td>{!o.fecha_egreso && <button className="btn-danger text-xs" onClick={() => egresarHab(o.id)}>Egresar</button>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {estado && (
+              <>
+                <div className="pt-2 border-t">
+                  <h3 className="font-semibold">Estado de cuenta</h3>
+                  <div className="grid grid-cols-3 gap-2 text-xs my-2">
+                    <div className="card !p-2"><div className="text-slate-500">Pendiente consumos</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.consumos_pendientes).toFixed(2)}</div></div>
+                    <div className="card !p-2"><div className="text-slate-500">Habitacion facturable</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.habitacion_pendiente).toFixed(2)}</div></div>
+                    <div className="card !p-2"><div className="text-slate-500">Habitacion en curso</div><div className="text-lg font-semibold text-blue-600">${Number(estado.totales.habitacion_en_curso).toFixed(2)}</div></div>
+                  </div>
+                  <table className="table">
+                    <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripcion</th><th>Cant</th><th>Precio</th><th>Subtotal</th><th>Fact</th></tr></thead>
+                    <tbody>
+                      {estado.ocupaciones.map((o: any) => (
+                        <tr key={`o${o.id}`} className={!o.fecha_egreso ? "bg-blue-50/40" : ""}>
+                          <td className="text-xs">{o.fecha_ingreso}</td>
+                          <td><span className="text-xs px-1 rounded bg-purple-100">habitacion</span></td>
+                          <td>Habitacion {o.habitacion} ({o.habitacion_tipo}){!o.fecha_egreso && " - en curso"}</td>
+                          <td>{o.dias}</td>
+                          <td>{Number(o.precio_diario_snapshot).toFixed(2)}</td>
+                          <td>${Number(o.subtotal).toFixed(2)}</td>
+                          <td>{o.facturado ? "Si" : "No"}</td>
+                        </tr>
+                      ))}
+                      {estado.consumos.map((c: any) => (
+                        <tr key={`c${c.id}`}>
+                          <td className="text-xs">{c.fecha}</td>
+                          <td><span className={`text-xs px-1 rounded ${c.es_servicio ? "bg-green-100" : "bg-slate-100"}`}>{c.es_servicio ? "servicio" : "producto"}</span></td>
+                          <td>{c.producto}</td>
+                          <td>{c.cantidad}</td>
+                          <td>{Number(c.precio_venta_snapshot).toFixed(2)}</td>
+                          <td>${Number(c.subtotal).toFixed(2)}</td>
+                          <td>{c.facturado ? "Si" : "No"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         </div>

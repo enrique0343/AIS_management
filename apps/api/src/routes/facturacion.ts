@@ -35,12 +35,36 @@ app.post("/facturas", requireRole("admin", "facturacion"), async (c) => {
     .bind(ep.id)
     .all<{ id: number; cantidad: number; precio_venta_snapshot: number; producto: string }>();
 
-  if (!consumos.results?.length && !cargosExtra.length) {
+  // Ocupaciones de habitacion CERRADAS y no facturadas del episodio
+  const ocupaciones = await c.env.DB.prepare(
+    `SELECT o.id, o.precio_diario_snapshot,
+            h.numero AS habitacion, h.tipo AS habitacion_tipo,
+            o.fecha_ingreso, o.fecha_egreso,
+            MAX(CAST((julianday(o.fecha_egreso) - julianday(o.fecha_ingreso)) AS INTEGER), 1) AS dias
+       FROM ocupacion_habitacion o
+       JOIN habitacion h ON h.id = o.habitacion_id
+      WHERE o.episodio_id = ?
+        AND o.factura_detalle_id IS NULL
+        AND o.fecha_egreso IS NOT NULL`
+  )
+    .bind(ep.id)
+    .all<{
+      id: number;
+      precio_diario_snapshot: number;
+      habitacion: string;
+      habitacion_tipo: string;
+      dias: number;
+      fecha_ingreso: string;
+      fecha_egreso: string;
+    }>();
+
+  if (!consumos.results?.length && !cargosExtra.length && !ocupaciones.results?.length) {
     return c.json({ error: "nada_para_facturar" }, 400);
   }
 
   let subtotal = 0;
   for (const c0 of consumos.results ?? []) subtotal += c0.cantidad * c0.precio_venta_snapshot;
+  for (const o of ocupaciones.results ?? []) subtotal += o.dias * o.precio_diario_snapshot;
   for (const e of cargosExtra) subtotal += e.cantidad * e.precio_unitario;
   const iva = +(subtotal * (ivaPct / 100)).toFixed(2);
   const total = +(subtotal + iva).toFixed(2);
@@ -64,6 +88,24 @@ app.post("/facturas", requireRole("admin", "facturacion"), async (c) => {
       .run();
     await c.env.DB.prepare(`UPDATE consumo_paciente SET factura_detalle_id = ? WHERE id = ?`)
       .bind(ins.meta.last_row_id, c0.id)
+      .run();
+  }
+  for (const o of ocupaciones.results ?? []) {
+    const sub = o.dias * o.precio_diario_snapshot;
+    const ins = await c.env.DB.prepare(
+      `INSERT INTO factura_detalle (factura_id, descripcion, cantidad, precio_unitario, subtotal)
+       VALUES (?, ?, ?, ?, ?)`
+    )
+      .bind(
+        facturaId,
+        `Habitacion ${o.habitacion} (${o.habitacion_tipo}) - ${o.dias} dia(s)`,
+        o.dias,
+        o.precio_diario_snapshot,
+        sub
+      )
+      .run();
+    await c.env.DB.prepare(`UPDATE ocupacion_habitacion SET factura_detalle_id = ? WHERE id = ?`)
+      .bind(ins.meta.last_row_id, o.id)
       .run();
   }
   for (const e of cargosExtra) {

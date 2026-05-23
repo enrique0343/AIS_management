@@ -1,7 +1,7 @@
 import { useEffect, useState, ReactNode } from "react";
 import { api } from "../lib/api";
 
-type Tab = "proveedores" | "laboratorios" | "areas" | "categorias" | "unidades";
+type Tab = "proveedores" | "laboratorios" | "areas" | "habitaciones" | "categorias" | "unidades";
 
 export default function Catalogos() {
   const [tab, setTab] = useState<Tab>("proveedores");
@@ -9,7 +9,7 @@ export default function Catalogos() {
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Catalogos</h1>
       <div className="flex gap-2 border-b">
-        {(["proveedores", "laboratorios", "areas", "categorias", "unidades"] as Tab[]).map((t) => (
+        {(["proveedores", "laboratorios", "areas", "habitaciones", "categorias", "unidades"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -24,6 +24,7 @@ export default function Catalogos() {
       {tab === "proveedores" && <Proveedores />}
       {tab === "laboratorios" && <Laboratorios />}
       {tab === "areas" && <Areas />}
+      {tab === "habitaciones" && <Habitaciones />}
       {tab === "categorias" && <Categorias />}
       {tab === "unidades" && <Unidades />}
     </div>
@@ -115,6 +116,50 @@ function Areas() {
       <table className="table">
         <thead><tr><th>Nombre</th><th>Tipo</th><th>Bajo llave</th></tr></thead>
         <tbody>{items.map((a) => <tr key={a.id}><td>{a.nombre}</td><td>{a.tipo}</td><td>{a.bajo_llave ? "Si" : ""}</td></tr>)}</tbody>
+      </table>
+    </Section>
+  );
+}
+
+function Habitaciones() {
+  const [items, setItems] = useState<any[]>([]);
+  const [form, setForm] = useState<any>({ numero: "", tipo: "individual", precio_diario: 0, capacidad: 1, ubicacion: "" });
+  const load = () => api.get<{ data: any[] }>("/api/habitaciones").then((r) => setItems(r.data));
+  useEffect(() => { load(); }, []);
+  const submit = async () => {
+    if (!form.numero) return;
+    await api.post("/api/habitaciones", form);
+    setForm({ numero: "", tipo: "individual", precio_diario: 0, capacidad: 1, ubicacion: "" });
+    load();
+  };
+  return (
+    <Section>
+      <div className="grid grid-cols-7 gap-2 mb-3">
+        <input className="input" placeholder="Numero" value={form.numero} onChange={(e) => setForm({ ...form, numero: e.target.value })} />
+        <select className="input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
+          <option value="individual">individual</option>
+          <option value="doble">doble</option>
+          <option value="suite">suite</option>
+          <option value="uci">uci</option>
+          <option value="observacion">observacion</option>
+        </select>
+        <input className="input" type="number" step="0.01" placeholder="Precio diario" value={form.precio_diario} onChange={(e) => setForm({ ...form, precio_diario: e.target.value })} />
+        <input className="input" type="number" placeholder="Capacidad" value={form.capacidad} onChange={(e) => setForm({ ...form, capacidad: e.target.value })} />
+        <input className="input col-span-2" placeholder="Ubicacion" value={form.ubicacion} onChange={(e) => setForm({ ...form, ubicacion: e.target.value })} />
+        <button className="btn" onClick={submit}>+ Agregar</button>
+      </div>
+      <table className="table">
+        <thead><tr><th>Numero</th><th>Tipo</th><th>Precio/dia</th><th>Cap.</th><th>Ocupantes</th><th>Pacientes</th><th>Activa</th></tr></thead>
+        <tbody>{items.map((h) => (
+          <tr key={h.id} className={h.ocupantes_actuales >= h.capacidad ? "bg-red-50" : h.ocupantes_actuales > 0 ? "bg-amber-50" : ""}>
+            <td>{h.numero}</td><td>{h.tipo}</td>
+            <td>${Number(h.precio_diario).toFixed(2)}</td>
+            <td>{h.capacidad}</td>
+            <td>{h.ocupantes_actuales}/{h.capacidad}</td>
+            <td className="text-xs">{h.pacientes_actuales ?? "-"}</td>
+            <td>{h.activa ? "Si" : "No"}</td>
+          </tr>
+        ))}</tbody>
       </table>
     </Section>
   );

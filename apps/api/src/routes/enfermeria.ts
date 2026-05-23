@@ -31,11 +31,43 @@ app.post("/consumos", requireRole("admin", "enfermeria", "medico", "farmaceutico
   if (ep.estado !== "activo") return c.json({ error: "episodio_cerrado" }, 400);
 
   const prod = await c.env.DB.prepare(
-    `SELECT id, costo_promedio_ponderado AS cpp, precio_venta FROM producto WHERE id = ?`
+    `SELECT p.id, p.costo_promedio_ponderado AS cpp, p.precio_venta, c.es_servicio
+       FROM producto p JOIN categoria_producto c ON c.id = p.categoria_id
+      WHERE p.id = ?`
   )
     .bind(b.producto_id)
-    .first<{ id: number; cpp: number; precio_venta: number }>();
+    .first<{ id: number; cpp: number; precio_venta: number; es_servicio: number }>();
   if (!prod) return c.json({ error: "producto_no_encontrado" }, 404);
+
+  // Servicios (laboratorio, radiologia, etc.) no descuentan stock ni generan
+  // movimiento_inventario: solo se registran como cargo del paciente.
+  if (prod.es_servicio === 1) {
+    const r = await c.env.DB.prepare(
+      `INSERT INTO consumo_paciente
+         (episodio_id, producto_id, lote_id, area_id, cantidad,
+          costo_unitario_snapshot, precio_venta_snapshot, usuario_id, observaciones)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(
+        ep.id,
+        b.producto_id,
+        b.area_id,
+        Number(b.cantidad),
+        prod.cpp,
+        prod.precio_venta,
+        c.get("session")!.usuario_id,
+        b.observaciones ?? null
+      )
+      .run();
+    await logAudit(c.env, {
+      usuario_id: c.get("session")!.usuario_id,
+      accion: "registrar_servicio",
+      entidad: "consumo_paciente",
+      payload: { episodio_id: ep.id, producto_id: b.producto_id, cantidad: Number(b.cantidad) },
+      ip: c.get("ip"),
+    });
+    return c.json({ ok: true, consumos: [r.meta.last_row_id] });
+  }
 
   let plan;
   try {

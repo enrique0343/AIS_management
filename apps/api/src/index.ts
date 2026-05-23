@@ -13,6 +13,7 @@ import facturacion from "./routes/facturacion";
 import quirofano from "./routes/quirofano";
 import profesionales from "./routes/profesionales";
 import usuarios from "./routes/usuarios";
+import habitaciones from "./routes/habitaciones";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
@@ -60,6 +61,7 @@ app.route("/api/facturacion", facturacion);
 app.route("/api/quirofano", quirofano);
 app.route("/api/profesionales", profesionales);
 app.route("/api/usuarios", usuarios);
+app.route("/api/habitaciones", habitaciones);
 
 app.onError((err, c) => {
   console.error(err);
