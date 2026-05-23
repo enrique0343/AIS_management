@@ -198,7 +198,7 @@ export default function Gastos() {
 
       {/* ===== Modal nuevo proveedor ===== */}
       {nuevoProvModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-60 p-4">
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4" style={{ zIndex: 60 }}>
           <div className="card w-full max-w-md space-y-3">
             <div className="flex justify-between items-center">
               <h2 className="font-semibold">Nuevo proveedor</h2>
