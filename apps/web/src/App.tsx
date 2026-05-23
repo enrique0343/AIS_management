@@ -14,6 +14,9 @@ import Catalogos from "./pages/Catalogos";
 import Profesionales from "./pages/Profesionales";
 import Usuarios from "./pages/Usuarios";
 import FacturaPrint from "./pages/FacturaPrint";
+import Atencion from "./pages/Atencion";
+import Gastos from "./pages/Gastos";
+import Reportes from "./pages/Reportes";
 
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -53,6 +56,9 @@ function AppRoutes() {
         <Route path="catalogos" element={<Catalogos />} />
         <Route path="profesionales" element={<Profesionales />} />
         <Route path="usuarios" element={<Usuarios />} />
+        <Route path="atencion" element={<Atencion />} />
+        <Route path="gastos" element={<Gastos />} />
+        <Route path="reportes" element={<Reportes />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

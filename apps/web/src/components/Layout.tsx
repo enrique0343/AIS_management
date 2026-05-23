@@ -3,6 +3,7 @@ import { useAuth, hasRole } from "../lib/auth";
 
 const menu = [
   { to: "/", label: "Inicio", roles: [] },
+  { to: "/atencion", label: "Atencion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
   { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"] },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"] },
   { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"] },
@@ -10,6 +11,8 @@ const menu = [
   { to: "/enfermeria", label: "Enfermeria", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
   { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"] },
   { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"] },
+  { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"] },
+  { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"] },
   { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"] },
   { to: "/profesionales", label: "Profesionales", roles: ["admin"] },
   { to: "/usuarios", label: "Usuarios", roles: ["admin"] },

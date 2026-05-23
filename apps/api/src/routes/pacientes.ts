@@ -217,4 +217,63 @@ app.post("/episodios/:id/cerrar", requireRole("admin", "medico", "enfermeria"), 
   return c.json({ ok: true });
 });
 
+// Enfermeria solicita el alta del paciente. Marca el episodio para que
+// administracion lo revise, ajuste y luego cierre/facture.
+app.post(
+  "/episodios/:id/solicitar-alta",
+  requireRole("admin", "enfermeria", "medico"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    const ep = await c.env.DB.prepare(`SELECT estado FROM episodio_atencion WHERE id = ?`)
+      .bind(id)
+      .first<{ estado: string }>();
+    if (!ep) return c.json({ error: "no_encontrado" }, 404);
+    if (ep.estado !== "activo") return c.json({ error: "episodio_no_activo" }, 400);
+    await c.env.DB.prepare(
+      `UPDATE episodio_atencion
+          SET alta_solicitada_en = datetime('now'),
+              alta_solicitada_por = ?
+        WHERE id = ?`
+    )
+      .bind(c.get("session")!.usuario_id, id)
+      .run();
+    return c.json({ ok: true });
+  }
+);
+
+// Cancela la solicitud de alta (vuelve a activo "normal")
+app.post(
+  "/episodios/:id/cancelar-alta",
+  requireRole("admin", "enfermeria", "medico"),
+  async (c) => {
+    const id = parseInt(c.req.param("id"), 10);
+    await c.env.DB.prepare(
+      `UPDATE episodio_atencion SET alta_solicitada_en=NULL, alta_solicitada_por=NULL WHERE id=?`
+    )
+      .bind(id)
+      .run();
+    return c.json({ ok: true });
+  }
+);
+
+// Pacientes "en atencion": episodio activo o habitacion activa.
+// Usado por la pagina /atencion (bedside).
+app.get("/_en-atencion", async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT DISTINCT p.id, p.expediente, p.nombres, p.apellidos,
+            e.id AS episodio_id, e.fecha_inicio, e.motivo,
+            e.alta_solicitada_en, e.estado AS episodio_estado,
+            o.id AS ocupacion_id, h.numero AS habitacion, h.tipo AS habitacion_tipo,
+            o.fecha_ingreso AS habitacion_desde,
+            (SELECT COUNT(*) FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL) AS consumos_pend,
+            (SELECT codigo FROM cirugia WHERE paciente_id = p.id AND estado IN ('programada','en_curso') ORDER BY fecha_programada LIMIT 1) AS cirugia_proxima
+       FROM paciente p
+       JOIN episodio_atencion e ON e.paciente_id = p.id AND e.estado = 'activo'
+       LEFT JOIN ocupacion_habitacion o ON o.paciente_id = p.id AND o.fecha_egreso IS NULL
+       LEFT JOIN habitacion h ON h.id = o.habitacion_id
+      ORDER BY e.alta_solicitada_en IS NULL, e.fecha_inicio DESC`
+  ).all();
+  return c.json({ data: results });
+});
+
 export default app;

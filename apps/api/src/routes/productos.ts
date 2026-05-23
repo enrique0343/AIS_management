@@ -10,6 +10,7 @@ app.use("*", requireAuth);
 app.get("/", async (c) => {
   const q = c.req.query("q") ?? "";
   const controlado = c.req.query("controlado");
+  const prefijos = c.req.query("categoria_prefijo");
   const filtros: string[] = ["1=1"];
   const binds: (string | number)[] = [];
   if (q) {
@@ -17,6 +18,13 @@ app.get("/", async (c) => {
     binds.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
   if (controlado === "1") filtros.push("p.es_controlado = 1");
+  if (prefijos) {
+    const arr = prefijos.split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
+    if (arr.length) {
+      filtros.push(`c.prefijo IN (${arr.map(() => "?").join(",")})`);
+      binds.push(...arr);
+    }
+  }
   const { results } = await c.env.DB.prepare(
     `SELECT p.id, p.codigo, p.nombre, p.principio_activo, p.es_controlado,
             p.requiere_receta_especial, p.precio_venta, p.costo_promedio_ponderado,
