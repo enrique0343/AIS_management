@@ -2,6 +2,7 @@ export type Bindings = {
   DB: D1Database;
   SESSIONS: KVNamespace;
   DOCS: R2Bucket;
+  ASSETS: Fetcher;
   APP_ENV: string;
   SESSION_TTL_SECONDS: string;
 };

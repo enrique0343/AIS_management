@@ -6,7 +6,8 @@
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "build:web": "pnpm --filter @ais/web build && rm -rf ./public && mkdir -p ./public && cp -R ../web/dist/. ./public/",
+    "deploy": "pnpm build:web && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "db:migrate:local": "wrangler d1 migrations apply ais_management --local",
     "db:migrate:remote": "wrangler d1 migrations apply ais_management --remote",
@@ -22,6 +23,6 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240925.0",
     "typescript": "^5.5.4",
-    "wrangler": "^3.78.0"
+    "wrangler": "^4.94.0"
   }
 }

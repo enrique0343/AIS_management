@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { cors } from "hono/cors";
 import type { Bindings, AppVariables } from "./env";
 import { sessionMiddleware } from "./middleware/auth";
 
@@ -16,16 +15,6 @@ import profesionales from "./routes/profesionales";
 import usuarios from "./routes/usuarios";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
-
-app.use(
-  "*",
-  cors({
-    origin: (origin) => origin ?? "*",
-    credentials: true,
-    allowHeaders: ["Content-Type", "Authorization"],
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  })
-);
 
 app.use("*", sessionMiddleware);
 
@@ -72,10 +61,15 @@ app.route("/api/quirofano", quirofano);
 app.route("/api/profesionales", profesionales);
 app.route("/api/usuarios", usuarios);
 
-app.notFound((c) => c.json({ error: "not_found", path: c.req.path }, 404));
 app.onError((err, c) => {
   console.error(err);
   return c.json({ error: "internal", message: err.message }, 500);
 });
+
+// API: 404 explicito si no matchea ninguna ruta /api/*
+app.all("/api/*", (c) => c.json({ error: "not_found", path: c.req.path }, 404));
+
+// Cualquier otra ruta -> servir SPA (Workers Assets con SPA fallback).
+app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
 export default app;

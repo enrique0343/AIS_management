@@ -7,6 +7,14 @@ compatibility_flags = ["nodejs_compat"]
 APP_ENV = "production"
 SESSION_TTL_SECONDS = "28800"
 
+# El SPA se sirve desde el mismo Worker via Workers Assets.
+# El build coloca el SPA en ./public (ver script "predeploy").
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "ais_management"
