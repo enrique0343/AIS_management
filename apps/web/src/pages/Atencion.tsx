@@ -375,8 +375,20 @@ export default function Atencion() {
           {estado && (
             <div className="card">
               <h3 className="font-semibold mb-2">Cuenta hospitalaria</h3>
+              {(() => {
+                const totalPF = Number(estado.totales.consumos_pendientes) + Number(estado.totales.habitacion_en_curso) + Number(estado.totales.habitacion_pendiente);
+                return (
+                  <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 mb-3 flex justify-between items-center">
+                    <div>
+                      <div className="text-xs text-indigo-600 font-medium uppercase tracking-wide">Total por facturar (proyectado)</div>
+                      <div className="text-xs text-slate-500 mt-0.5">Consumos + habitacion en curso + habitacion cerrada sin facturar</div>
+                    </div>
+                    <div className="text-2xl font-bold text-indigo-700">${totalPF.toFixed(2)}</div>
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-3 gap-2 mb-3">
-                <div className="card !p-2"><div className="text-xs text-slate-500">Consumos pendientes</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.consumos_pendientes).toFixed(2)}</div></div>
+                <div className="card !p-2"><div className="text-xs text-slate-500">Consumos pend.</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.consumos_pendientes).toFixed(2)}</div></div>
                 <div className="card !p-2"><div className="text-xs text-slate-500">Habitacion en curso</div><div className="text-lg font-semibold text-blue-600">${Number(estado.totales.habitacion_en_curso).toFixed(2)}</div></div>
                 <div className="card !p-2"><div className="text-xs text-slate-500">Habitacion facturable</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.habitacion_pendiente).toFixed(2)}</div></div>
               </div>

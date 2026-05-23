@@ -41,10 +41,22 @@ app.get("/api/dashboard", async (c) => {
        )`
     ).first<{ n: number }>(),
     c.env.DB.prepare(
-      `SELECT COALESCE(SUM(cp.precio_venta_snapshot * cp.cantidad), 0) AS t
-         FROM consumo_paciente cp
-         JOIN episodio_atencion e ON e.id = cp.episodio_id
-        WHERE e.estado = 'activo'`
+      `SELECT ROUND(
+         COALESCE((
+           SELECT SUM(cp.precio_venta_snapshot * cp.cantidad)
+             FROM consumo_paciente cp
+             JOIN episodio_atencion e ON e.id = cp.episodio_id
+            WHERE e.estado = 'activo' AND cp.factura_detalle_id IS NULL
+         ), 0) +
+         COALESCE((
+           SELECT SUM(
+             MAX(CAST((julianday(COALESCE(oh.fecha_egreso, datetime('now'))) - julianday(oh.fecha_ingreso)) AS INTEGER), 1)
+             * oh.precio_diario_snapshot
+           )
+             FROM ocupacion_habitacion oh
+             JOIN episodio_atencion e2 ON e2.id = oh.episodio_id
+            WHERE e2.estado = 'activo' AND oh.factura_detalle_id IS NULL
+         ), 0), 2) AS t`
     ).first<{ t: number }>(),
   ]);
   return c.json({
@@ -56,7 +68,7 @@ app.get("/api/dashboard", async (c) => {
     monto_pendiente: queries[4]?.t ?? 0,
     ingresos_hoy: queries[5]?.t ?? 0,
     episodios_por_facturar: queries[6]?.n ?? 0,
-    cargos_activos: queries[7]?.t ?? 0,
+    total_por_facturar: queries[7]?.t ?? 0,
   });
 });
 
