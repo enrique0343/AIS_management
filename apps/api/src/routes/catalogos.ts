@@ -102,6 +102,33 @@ app.post("/areas", requireRole("admin"), async (c) => {
 
 app.get("/srs", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
+  const browse = c.req.query("browse") === "1";
+
+  if (browse) {
+    const page  = Math.max(1, parseInt(c.req.query("page") ?? "1", 10));
+    const limit = 50;
+    const offset = (page - 1) * limit;
+    const where = q.length >= 2
+      ? `AND (nombre_comercial LIKE ? OR principio_activo LIKE ? OR registro_sanitario LIKE ?)`
+      : "";
+    const like = `%${q}%`;
+    const binds: string[] = q.length >= 2 ? [like, like, like] : [];
+
+    const [{ results }, countRow] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT id, registro_sanitario, nombre_comercial, principio_activo,
+                concentracion, forma_farmaceutica, fabricante, pvmp
+           FROM catalogo_srs WHERE estado = 'A' ${where}
+           ORDER BY nombre_comercial
+           LIMIT ${limit} OFFSET ${offset}`
+      ).bind(...binds).all(),
+      c.env.DB.prepare(
+        `SELECT COUNT(*) as total FROM catalogo_srs WHERE estado = 'A' ${where}`
+      ).bind(...binds).first<{ total: number }>(),
+    ]);
+    return c.json({ data: results, total: countRow?.total ?? 0, page, limit });
+  }
+
   if (q.length < 2) return c.json({ data: [] });
   const like = `%${q}%`;
   const { results } = await c.env.DB.prepare(

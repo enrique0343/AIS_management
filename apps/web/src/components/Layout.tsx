@@ -22,6 +22,7 @@ const menu: MenuItem[] = [
   { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },
   { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"], group: "admin" },
+  { to: "/catalogo-srs", label: "Catalogo SRS", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },
   { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"], group: "admin" },
   { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"], group: "admin" },
   { to: "/profesionales", label: "Profesionales", roles: ["admin"], group: "admin" },
