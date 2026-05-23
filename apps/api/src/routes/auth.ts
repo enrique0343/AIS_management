@@ -18,10 +18,15 @@ const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 /** Resuelve el slug de institución desde el cuerpo o el header Host. */
 function resolveSlug(bodySlug: string | undefined, hostHeader: string | undefined): string {
   if (bodySlug?.trim()) return bodySlug.trim();
-  // Intentar derivar del subdominio: "hospital-bloom.ais.com" → "hospital-bloom"
   if (hostHeader) {
+    // workers.dev y localhost no codifican el slug — usar default
+    if (hostHeader.includes("workers.dev") || hostHeader.includes("localhost")) {
+      return "principal";
+    }
     const parts = hostHeader.split(".");
-    if (parts.length >= 3 && parts[0] !== "www") return parts[0];
+    // sub.app.dominio.tld → 4+ partes → parts[0] es el slug del cliente
+    // app.dominio.tld    → 3 partes  → es el principal
+    if (parts.length >= 4) return parts[0];
   }
   return "principal";
 }
