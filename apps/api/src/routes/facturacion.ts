@@ -278,8 +278,8 @@ app.get("/episodios/:id/resumen-cuenta", requireRole("admin", "facturacion"), as
     items: number; productos: ProductoLinea[];
   };
   const catMap = new Map<number, CatEntry>();
-  for (const linea of lineas.results ?? []) {
-    const prev = catMap.get(linea.categoria_id) ?? {
+  for (const linea of lineas ?? []) {
+    const prev: CatEntry = catMap.get(linea.categoria_id) ?? {
       categoria_id: linea.categoria_id, categoria: linea.categoria,
       subtotal: 0, items: 0, productos: [],
     };
@@ -306,7 +306,7 @@ app.get("/episodios/:id/resumen-cuenta", requireRole("admin", "facturacion"), as
 
   let habitacionSubtotal = 0;
   const habProductos: ProductoLinea[] = [];
-  for (const o of habLineas.results ?? []) {
+  for (const o of habLineas ?? []) {
     const sub = +(o.dias * o.precio_diario_snapshot).toFixed(2);
     habitacionSubtotal += sub;
     habProductos.push({
