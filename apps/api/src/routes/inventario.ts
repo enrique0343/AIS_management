@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Bindings, AppVariables } from "../env";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole, getInstId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 import { planFEFO } from "../lib/fefo";
 
@@ -9,6 +9,7 @@ app.use("*", requireAuth);
 
 // Stock por area (resumen)
 app.get("/stock", async (c) => {
+  const instId = getInstId(c);
   const areaId = c.req.query("area_id");
   const sql = `
     SELECT e.producto_id, p.codigo, p.nombre, p.es_controlado,
@@ -19,15 +20,19 @@ app.get("/stock", async (c) => {
       JOIN area a ON a.id = e.area_id
       LEFT JOIN lote l ON l.id = e.lote_id
      WHERE e.cantidad > 0
+       AND e.institucion_id = ?
        ${areaId ? "AND e.area_id = ?" : ""}
      ORDER BY p.nombre, l.fecha_vencimiento`;
-  const stmt = areaId ? c.env.DB.prepare(sql).bind(parseInt(areaId, 10)) : c.env.DB.prepare(sql);
+  const stmt = areaId
+    ? c.env.DB.prepare(sql).bind(instId, parseInt(areaId, 10))
+    : c.env.DB.prepare(sql).bind(instId);
   const { results } = await stmt.all();
   return c.json({ data: results });
 });
 
 // Valorizacion de inventario (existencia x CPP) por area
 app.get("/valorizacion", async (c) => {
+  const instId = getInstId(c);
   const areaId = c.req.query("area_id");
   const sql = `
     SELECT p.id AS producto_id, p.codigo, p.nombre, u.abreviatura AS unidad,
@@ -39,10 +44,14 @@ app.get("/valorizacion", async (c) => {
       JOIN producto p ON p.id = e.producto_id
       JOIN unidad_medida u ON u.id = p.unidad_medida_id
       JOIN area a ON a.id = e.area_id
-     WHERE e.cantidad > 0 ${areaId ? "AND e.area_id = ?" : ""}
+     WHERE e.cantidad > 0
+       AND e.institucion_id = ?
+       ${areaId ? "AND e.area_id = ?" : ""}
      GROUP BY p.id, a.id
      ORDER BY a.nombre, p.nombre`;
-  const stmt = areaId ? c.env.DB.prepare(sql).bind(parseInt(areaId, 10)) : c.env.DB.prepare(sql);
+  const stmt = areaId
+    ? c.env.DB.prepare(sql).bind(instId, parseInt(areaId, 10))
+    : c.env.DB.prepare(sql).bind(instId);
   const { results } = await stmt.all<{ cantidad: number; valor: number; area: string }>();
   const total = (results ?? []).reduce((s, r) => s + Number(r.valor), 0);
   return c.json({ data: results, total: Math.round(total * 100) / 100 });
@@ -50,10 +59,11 @@ app.get("/valorizacion", async (c) => {
 
 // Movimientos
 app.get("/movimientos", async (c) => {
+  const instId = getInstId(c);
   const productoId = c.req.query("producto_id");
   const tipo = c.req.query("tipo");
-  const filt: string[] = ["1=1"];
-  const binds: unknown[] = [];
+  const filt: string[] = ["m.institucion_id = ?"];
+  const binds: unknown[] = [instId];
   if (productoId) {
     filt.push("m.producto_id = ?");
     binds.push(parseInt(productoId, 10));
@@ -90,6 +100,7 @@ app.post(
   "/transferencias",
   requireRole("admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"),
   async (c) => {
+    const instId = getInstId(c);
     const b = await c.req.json().catch(() => null);
     if (
       !b ||
@@ -102,14 +113,14 @@ app.post(
       return c.json({ error: "datos_invalidos" }, 400);
     }
     const cantidad = Number(b.cantidad);
-    const plan = await planFEFO(c.env, b.producto_id, b.area_origen_id, cantidad).catch((e: any) => ({
+    const plan = await planFEFO(c.env, b.producto_id, b.area_origen_id, cantidad, instId).catch((e: any) => ({
       error: e.message,
     } as any));
     if ((plan as any).error) return c.json({ error: (plan as any).error }, 400);
     const prod = await c.env.DB.prepare(
-      `SELECT es_controlado, costo_promedio_ponderado AS cpp FROM producto WHERE id = ?`
+      `SELECT es_controlado, costo_promedio_ponderado AS cpp FROM producto WHERE id = ? AND institucion_id = ?`
     )
-      .bind(b.producto_id)
+      .bind(b.producto_id, instId)
       .first<{ es_controlado: number; cpp: number }>();
     if (!prod) return c.json({ error: "producto_no_encontrado" }, 400);
 
@@ -117,33 +128,35 @@ app.post(
       // Descontar origen
       await c.env.DB.prepare(
         `UPDATE existencia SET cantidad = cantidad - ?
-           WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+           WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)
+             AND institucion_id = ?`
       )
-        .bind(step.tomar, b.producto_id, b.area_origen_id, step.lote_id)
+        .bind(step.tomar, b.producto_id, b.area_origen_id, step.lote_id, instId)
         .run();
       // Sumar destino
       const ex = await c.env.DB.prepare(
         `SELECT id FROM existencia
-          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)
+            AND institucion_id = ?`
       )
-        .bind(b.producto_id, b.area_destino_id, step.lote_id)
+        .bind(b.producto_id, b.area_destino_id, step.lote_id, instId)
         .first<{ id: number }>();
       if (ex) {
-        await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ?`)
-          .bind(step.tomar, ex.id)
+        await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ? AND institucion_id = ?`)
+          .bind(step.tomar, ex.id, instId)
           .run();
       } else {
         await c.env.DB.prepare(
-          `INSERT INTO existencia (producto_id, area_id, lote_id, cantidad) VALUES (?, ?, ?, ?)`
+          `INSERT INTO existencia (producto_id, area_id, lote_id, cantidad, institucion_id) VALUES (?, ?, ?, ?, ?)`
         )
-          .bind(b.producto_id, b.area_destino_id, step.lote_id, step.tomar)
+          .bind(b.producto_id, b.area_destino_id, step.lote_id, step.tomar, instId)
           .run();
       }
       // Movimientos par (salida y entrada)
       await c.env.DB.prepare(
         `INSERT INTO movimiento_inventario
-           (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, costo_unitario, usuario_id, referencia_tipo, n_autorizacion_srs, observaciones)
-         VALUES ('transferencia_salida', ?, ?, ?, ?, ?, ?, ?, 'transferencia', ?, ?)`
+           (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, costo_unitario, usuario_id, referencia_tipo, n_autorizacion_srs, observaciones, institucion_id)
+         VALUES ('transferencia_salida', ?, ?, ?, ?, ?, ?, ?, 'transferencia', ?, ?, ?)`
       )
         .bind(
           b.producto_id,
@@ -154,13 +167,14 @@ app.post(
           prod.cpp,
           c.get("session")!.usuario_id,
           b.n_autorizacion_srs ?? null,
-          b.observaciones ?? null
+          b.observaciones ?? null,
+          instId
         )
         .run();
       await c.env.DB.prepare(
         `INSERT INTO movimiento_inventario
-           (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, costo_unitario, usuario_id, referencia_tipo, n_autorizacion_srs, observaciones)
-         VALUES ('transferencia_entrada', ?, ?, ?, ?, ?, ?, ?, 'transferencia', ?, ?)`
+           (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, costo_unitario, usuario_id, referencia_tipo, n_autorizacion_srs, observaciones, institucion_id)
+         VALUES ('transferencia_entrada', ?, ?, ?, ?, ?, ?, ?, 'transferencia', ?, ?, ?)`
       )
         .bind(
           b.producto_id,
@@ -171,7 +185,8 @@ app.post(
           prod.cpp,
           c.get("session")!.usuario_id,
           b.n_autorizacion_srs ?? null,
-          b.observaciones ?? null
+          b.observaciones ?? null,
+          instId
         )
         .run();
     }
@@ -182,6 +197,7 @@ app.post(
       entidad: "movimiento_inventario",
       payload: b,
       ip: c.get("ip"),
+      institucion_id: instId,
     });
     return c.json({ ok: true });
   }
@@ -189,6 +205,7 @@ app.post(
 
 // Descarte (SRS §7.8.2)
 app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const instId = getInstId(c);
   const b = await c.req.json().catch(() => null);
   if (!b?.producto_id || !b?.area_id || !b?.cantidad || !b?.motivo) {
     return c.json({ error: "datos_invalidos" }, 400);
@@ -196,7 +213,7 @@ app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) 
   const motivosValidos = ["vencido", "deteriorado", "defuncion", "sobrante", "otro"];
   if (!motivosValidos.includes(b.motivo)) return c.json({ error: "motivo_invalido" }, 400);
 
-  const plan = await planFEFO(c.env, b.producto_id, b.area_id, Number(b.cantidad)).catch((e: any) => ({
+  const plan = await planFEFO(c.env, b.producto_id, b.area_id, Number(b.cantidad), instId).catch((e: any) => ({
     error: e.message,
   } as any));
   if ((plan as any).error) return c.json({ error: (plan as any).error }, 400);
@@ -204,14 +221,15 @@ app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) 
   for (const step of plan as { lote_id: number | null; tomar: number }[]) {
     await c.env.DB.prepare(
       `UPDATE existencia SET cantidad = cantidad - ?
-         WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+         WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)
+           AND institucion_id = ?`
     )
-      .bind(step.tomar, b.producto_id, b.area_id, step.lote_id)
+      .bind(step.tomar, b.producto_id, b.area_id, step.lote_id, instId)
       .run();
     await c.env.DB.prepare(
       `INSERT INTO movimiento_inventario
-         (tipo, producto_id, lote_id, area_origen_id, cantidad, usuario_id, referencia_tipo, observaciones)
-       VALUES ('descarte', ?, ?, ?, ?, ?, 'descarte', ?)`
+         (tipo, producto_id, lote_id, area_origen_id, cantidad, usuario_id, referencia_tipo, observaciones, institucion_id)
+       VALUES ('descarte', ?, ?, ?, ?, ?, 'descarte', ?, ?)`
     )
       .bind(
         b.producto_id,
@@ -219,7 +237,8 @@ app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) 
         b.area_id,
         step.tomar,
         c.get("session")!.usuario_id,
-        `motivo:${b.motivo}${b.observaciones ? " - " + b.observaciones : ""}`
+        `motivo:${b.motivo}${b.observaciones ? " - " + b.observaciones : ""}`,
+        instId
       )
       .run();
   }
@@ -230,6 +249,7 @@ app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) 
     entidad: "movimiento_inventario",
     payload: b,
     ip: c.get("ip"),
+    institucion_id: instId,
   });
   return c.json({ ok: true });
 });
@@ -239,6 +259,7 @@ app.post("/descartes", requireRole("admin", "jefe_farmacia_central"), async (c) 
 //   - Ajuste positivo: lote_id existente, O bien lote_numero + fecha_vencimiento (crea lote)
 //   - Ajuste negativo: lote_id existente obligatorio
 app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const instId = getInstId(c);
   const b = await c.req.json().catch(() => null);
   if (!b?.producto_id || !b?.area_id || b?.cantidad === undefined || !b?.observaciones) {
     return c.json({ error: "datos_invalidos_o_falta_justificacion" }, 400);
@@ -249,9 +270,9 @@ app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) =>
   const prod = await c.env.DB.prepare(
     `SELECT p.id, cat.requiere_lote_vencimiento, cat.nombre AS categoria
        FROM producto p JOIN categoria_producto cat ON cat.id = p.categoria_id
-      WHERE p.id = ?`
+      WHERE p.id = ? AND p.institucion_id = ?`
   )
-    .bind(b.producto_id)
+    .bind(b.producto_id, instId)
     .first<{ id: number; requiere_lote_vencimiento: number; categoria: string }>();
   if (!prod) return c.json({ error: "producto_no_encontrado" }, 400);
 
@@ -276,17 +297,17 @@ app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) =>
         }
         // Reutilizar si ya existe ese numero_lote para el producto
         const existingLote = await c.env.DB.prepare(
-          `SELECT id FROM lote WHERE producto_id = ? AND numero_lote = ?`
+          `SELECT id FROM lote WHERE producto_id = ? AND numero_lote = ? AND institucion_id = ?`
         )
-          .bind(b.producto_id, b.lote_numero)
+          .bind(b.producto_id, b.lote_numero, instId)
           .first<{ id: number }>();
         if (existingLote) {
           loteId = existingLote.id;
         } else {
           const ins = await c.env.DB.prepare(
-            `INSERT INTO lote (producto_id, numero_lote, fecha_vencimiento) VALUES (?, ?, ?)`
+            `INSERT INTO lote (producto_id, numero_lote, fecha_vencimiento, institucion_id) VALUES (?, ?, ?, ?)`
           )
-            .bind(b.producto_id, b.lote_numero, b.fecha_vencimiento)
+            .bind(b.producto_id, b.lote_numero, b.fecha_vencimiento, instId)
             .run();
           loteId = ins.meta.last_row_id as number;
         }
@@ -296,27 +317,28 @@ app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) =>
 
   const ex = await c.env.DB.prepare(
     `SELECT id, cantidad FROM existencia
-       WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+       WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)
+         AND institucion_id = ?`
   )
-    .bind(b.producto_id, b.area_id, loteId)
+    .bind(b.producto_id, b.area_id, loteId, instId)
     .first<{ id: number; cantidad: number }>();
   if (ex) {
     if (ex.cantidad + cantidad < 0) return c.json({ error: "cantidad_resultante_negativa" }, 400);
-    await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ?`)
-      .bind(cantidad, ex.id)
+    await c.env.DB.prepare(`UPDATE existencia SET cantidad = cantidad + ? WHERE id = ? AND institucion_id = ?`)
+      .bind(cantidad, ex.id, instId)
       .run();
   } else {
     if (cantidad < 0) return c.json({ error: "no_hay_existencia_para_decrementar" }, 400);
     await c.env.DB.prepare(
-      `INSERT INTO existencia (producto_id, area_id, lote_id, cantidad) VALUES (?, ?, ?, ?)`
+      `INSERT INTO existencia (producto_id, area_id, lote_id, cantidad, institucion_id) VALUES (?, ?, ?, ?, ?)`
     )
-      .bind(b.producto_id, b.area_id, loteId, cantidad)
+      .bind(b.producto_id, b.area_id, loteId, cantidad, instId)
       .run();
   }
   await c.env.DB.prepare(
     `INSERT INTO movimiento_inventario
-       (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, usuario_id, referencia_tipo, observaciones)
-     VALUES ('ajuste', ?, ?, ?, ?, ?, ?, 'ajuste', ?)`
+       (tipo, producto_id, lote_id, area_origen_id, area_destino_id, cantidad, usuario_id, referencia_tipo, observaciones, institucion_id)
+     VALUES ('ajuste', ?, ?, ?, ?, ?, ?, 'ajuste', ?, ?)`
   )
     .bind(
       b.producto_id,
@@ -325,7 +347,8 @@ app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) =>
       cantidad >= 0 ? b.area_id : null,
       Math.abs(cantidad),
       c.get("session")!.usuario_id,
-      b.observaciones
+      b.observaciones,
+      instId
     )
     .run();
 
@@ -335,6 +358,7 @@ app.post("/ajustes", requireRole("admin", "jefe_farmacia_central"), async (c) =>
     entidad: "movimiento_inventario",
     payload: b,
     ip: c.get("ip"),
+    institucion_id: instId,
   });
   return c.json({ ok: true });
 });

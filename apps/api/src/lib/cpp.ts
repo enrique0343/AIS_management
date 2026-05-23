@@ -19,17 +19,20 @@ export async function recalcCPP(
   productoId: number,
   cantidadCompra: number,
   costoUnitarioCompra: number,
-  factorConversion = 1
+  factorConversion = 1,
+  institucionId?: number
 ): Promise<number> {
+  const instFilter = institucionId !== undefined ? `AND institucion_id = ${institucionId}` : "";
+
   const prod = await env.DB.prepare(
-    `SELECT costo_promedio_ponderado AS cpp FROM producto WHERE id = ?`
+    `SELECT costo_promedio_ponderado AS cpp FROM producto WHERE id = ? ${instFilter}`
   )
     .bind(productoId)
     .first<{ cpp: number }>();
   if (!prod) throw new Error("producto no encontrado");
 
   const existRow = await env.DB.prepare(
-    `SELECT COALESCE(SUM(cantidad), 0) AS total FROM existencia WHERE producto_id = ?`
+    `SELECT COALESCE(SUM(cantidad), 0) AS total FROM existencia WHERE producto_id = ? ${instFilter}`
   )
     .bind(productoId)
     .first<{ total: number }>();
@@ -51,7 +54,7 @@ export async function recalcCPP(
   }
   nuevo = Math.round(nuevo * 1e6) / 1e6;
 
-  await env.DB.prepare(`UPDATE producto SET costo_promedio_ponderado = ? WHERE id = ?`)
+  await env.DB.prepare(`UPDATE producto SET costo_promedio_ponderado = ? WHERE id = ? ${instFilter}`)
     .bind(nuevo, productoId)
     .run();
 

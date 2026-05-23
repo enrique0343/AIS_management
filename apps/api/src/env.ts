@@ -13,6 +13,8 @@ export type SessionData = {
   nombre: string;
   roles: string[];
   created_at: number;
+  institucion_id: number;
+  institucion_slug: string;
 };
 
 export type AppVariables = {

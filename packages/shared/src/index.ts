@@ -9,6 +9,7 @@ export const RoleCode = z.enum([
   "enfermeria",
   "facturacion",
   "programador_quirofano",
+  "super_admin",
 ]);
 export type RoleCode = z.infer<typeof RoleCode>;
 
@@ -37,6 +38,7 @@ export type MovimientoTipo = z.infer<typeof MovimientoTipo>;
 export const LoginInput = z.object({
   email: z.string().email(),
   password: z.string().min(6),
+  slug: z.string().optional(),  // institución; si no se envía, el server lo deriva del Host header
 });
 export type LoginInput = z.infer<typeof LoginInput>;
 
