@@ -1,51 +1,55 @@
 import { Hono } from "hono";
 import type { Bindings, AppVariables } from "../env";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole, getInstId } from "../middleware/auth";
 import { logAudit } from "../lib/audit";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 app.use("*", requireAuth);
 
 app.get("/_en-atencion", async (c) => {
+  const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(
     `SELECT DISTINCT p.id, p.expediente, p.nombres, p.apellidos,
             e.id AS episodio_id, e.fecha_inicio, e.motivo,
             e.alta_solicitada_en, e.estado AS episodio_estado,
             e.medico_id AS medico_cabecera_id,
-            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = e.medico_id) AS medico_cabecera_nombre,
+            (SELECT nombres || ' ' || apellidos FROM profesional_medico WHERE id = e.medico_id AND institucion_id = ?) AS medico_cabecera_nombre,
             o.id AS ocupacion_id, h.numero AS habitacion, h.tipo AS habitacion_tipo,
             o.fecha_ingreso AS habitacion_desde,
-            (SELECT COUNT(*) FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL) AS consumos_pend,
-            (SELECT codigo FROM cirugia WHERE paciente_id = p.id AND estado IN ('programada','en_curso') ORDER BY fecha_programada LIMIT 1) AS cirugia_proxima
+            (SELECT COUNT(*) FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL AND cp.institucion_id = ?) AS consumos_pend,
+            (SELECT codigo FROM cirugia WHERE paciente_id = p.id AND estado IN ('programada','en_curso') AND institucion_id = ? ORDER BY fecha_programada LIMIT 1) AS cirugia_proxima
        FROM paciente p
-       JOIN episodio_atencion e ON e.paciente_id = p.id AND e.estado = 'activo'
-       LEFT JOIN ocupacion_habitacion o ON o.paciente_id = p.id AND o.fecha_egreso IS NULL
-       LEFT JOIN habitacion h ON h.id = o.habitacion_id
+       JOIN episodio_atencion e ON e.paciente_id = p.id AND e.estado = 'activo' AND e.institucion_id = ?
+       LEFT JOIN ocupacion_habitacion o ON o.paciente_id = p.id AND o.fecha_egreso IS NULL AND o.institucion_id = ?
+       LEFT JOIN habitacion h ON h.id = o.habitacion_id AND h.institucion_id = ?
+      WHERE p.institucion_id = ?
       ORDER BY e.alta_solicitada_en IS NULL, e.fecha_inicio DESC`
-  ).all();
+  ).bind(instId, instId, instId, instId, instId, instId, instId).all();
   return c.json({ data: results });
 });
 
 app.get("/", async (c) => {
+  const instId = getInstId(c);
   const q = c.req.query("q") ?? "";
   const sql = q
-    ? `SELECT * FROM paciente WHERE nombres LIKE ? OR apellidos LIKE ? OR documento_numero LIKE ? OR expediente LIKE ? ORDER BY apellidos, nombres LIMIT 200`
-    : `SELECT * FROM paciente ORDER BY creado_en DESC LIMIT 200`;
+    ? `SELECT * FROM paciente WHERE (nombres LIKE ? OR apellidos LIKE ? OR documento_numero LIKE ? OR expediente LIKE ?) AND institucion_id = ? ORDER BY apellidos, nombres LIMIT 200`
+    : `SELECT * FROM paciente WHERE institucion_id = ? ORDER BY creado_en DESC LIMIT 200`;
   const stmt = q
-    ? c.env.DB.prepare(sql).bind(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`)
-    : c.env.DB.prepare(sql);
+    ? c.env.DB.prepare(sql).bind(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`, instId)
+    : c.env.DB.prepare(sql).bind(instId);
   const { results } = await stmt.all();
   return c.json({ data: results });
 });
 
 app.get("/:id", async (c) => {
+  const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
-  const p = await c.env.DB.prepare(`SELECT * FROM paciente WHERE id = ?`).bind(id).first();
+  const p = await c.env.DB.prepare(`SELECT * FROM paciente WHERE id = ? AND institucion_id = ?`).bind(id, instId).first();
   if (!p) return c.json({ error: "no_encontrado" }, 404);
   const ep = await c.env.DB.prepare(
-    `SELECT * FROM episodio_atencion WHERE paciente_id = ? ORDER BY fecha_inicio DESC`
+    `SELECT * FROM episodio_atencion WHERE paciente_id = ? AND institucion_id = ? ORDER BY fecha_inicio DESC`
   )
-    .bind(id)
+    .bind(id, instId)
     .all();
   return c.json({ paciente: p, episodios: ep.results });
 });
@@ -54,13 +58,14 @@ app.post(
   "/",
   requireRole("admin", "medico", "enfermeria", "facturacion", "programador_quirofano"),
   async (c) => {
+    const instId = getInstId(c);
     const b = await c.req.json().catch(() => null);
     if (!b?.nombres || !b?.apellidos) return c.json({ error: "nombres_apellidos_requeridos" }, 400);
     const expediente = b.expediente ?? `EXP-${Date.now()}`;
     const r = await c.env.DB.prepare(
       `INSERT INTO paciente (expediente, nombres, apellidos, documento_tipo, documento_numero,
-        fecha_nacimiento, sexo, telefono, direccion, contacto_emergencia, alergias, observaciones, creado_por)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        fecha_nacimiento, sexo, telefono, direccion, contacto_emergencia, alergias, observaciones, creado_por, institucion_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         expediente,
@@ -75,7 +80,8 @@ app.post(
         b.contacto_emergencia ?? null,
         b.alergias ?? null,
         b.observaciones ?? null,
-        c.get("session")!.usuario_id
+        c.get("session")!.usuario_id,
+        instId
       )
       .run();
     const id = r.meta.last_row_id as number;
@@ -85,12 +91,14 @@ app.post(
       entidad: "paciente",
       entidad_id: id,
       ip: c.get("ip"),
+      institucion_id: instId,
     });
     return c.json({ id, expediente });
   }
 );
 
 app.put("/:id", requireAuth, async (c) => {
+  const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
   const b = await c.req.json().catch(() => null);
   if (!b) return c.json({ error: "datos_invalidos" }, 400);
@@ -117,7 +125,8 @@ app.put("/:id", requireAuth, async (c) => {
   }
   if (!fields.length) return c.json({ ok: true });
   binds.push(id);
-  await c.env.DB.prepare(`UPDATE paciente SET ${fields.join(", ")} WHERE id = ?`)
+  binds.push(instId);
+  await c.env.DB.prepare(`UPDATE paciente SET ${fields.join(", ")} WHERE id = ? AND institucion_id = ?`)
     .bind(...binds)
     .run();
   return c.json({ ok: true });
@@ -126,9 +135,10 @@ app.put("/:id", requireAuth, async (c) => {
 // Estado de cuenta del paciente: consumos y ocupaciones pendientes + facturados.
 // Una "ocupacion abierta" cuenta dias hasta hoy (no facturable hasta egreso).
 app.get("/:id/estado-cuenta", async (c) => {
+  const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
-  const pac = await c.env.DB.prepare(`SELECT id, nombres, apellidos, expediente FROM paciente WHERE id = ?`)
-    .bind(id)
+  const pac = await c.env.DB.prepare(`SELECT id, nombres, apellidos, expediente FROM paciente WHERE id = ? AND institucion_id = ?`)
+    .bind(id, instId)
     .first();
   if (!pac) return c.json({ error: "no_encontrado" }, 404);
 
@@ -139,13 +149,13 @@ app.get("/:id/estado-cuenta", async (c) => {
             cp.factura_detalle_id IS NOT NULL AS facturado,
             cp.episodio_id
        FROM consumo_paciente cp
-       JOIN producto p ON p.id = cp.producto_id
+       JOIN producto p ON p.id = cp.producto_id AND p.institucion_id = ?
        JOIN categoria_producto cat ON cat.id = p.categoria_id
-       JOIN episodio_atencion e ON e.id = cp.episodio_id
-      WHERE e.paciente_id = ?
+       JOIN episodio_atencion e ON e.id = cp.episodio_id AND e.institucion_id = ?
+      WHERE e.paciente_id = ? AND cp.institucion_id = ?
       ORDER BY cp.fecha DESC`
   )
-    .bind(id)
+    .bind(instId, instId, id, instId)
     .all<any>();
 
   const ocupaciones = await c.env.DB.prepare(
@@ -163,11 +173,11 @@ app.get("/:id/estado-cuenta", async (c) => {
               * o.precio_diario_snapshot, 2
             ) AS subtotal
        FROM ocupacion_habitacion o
-       JOIN habitacion h ON h.id = o.habitacion_id
-      WHERE o.paciente_id = ?
+       JOIN habitacion h ON h.id = o.habitacion_id AND h.institucion_id = ?
+      WHERE o.paciente_id = ? AND o.institucion_id = ?
       ORDER BY o.fecha_ingreso DESC`
   )
-    .bind(id)
+    .bind(instId, id, instId)
     .all<any>();
 
   const tot = (rows: any[], cond: (r: any) => boolean) =>
@@ -193,46 +203,49 @@ app.get("/:id/estado-cuenta", async (c) => {
 
 // Listar episodios (filtrables por estado / paciente)
 app.get("/episodios/list", async (c) => {
+  const instId = getInstId(c);
   const estado = c.req.query("estado");
   const pacienteId = c.req.query("paciente_id");
-  const filt: string[] = ["1=1"];
-  const binds: unknown[] = [];
+  const filt: string[] = ["e.institucion_id = ?"];
+  const binds: unknown[] = [instId];
   if (estado) { filt.push("e.estado = ?"); binds.push(estado); }
   if (pacienteId) { filt.push("e.paciente_id = ?"); binds.push(parseInt(pacienteId, 10)); }
   const { results } = await c.env.DB.prepare(
     `SELECT e.id, e.paciente_id, e.estado, e.fecha_inicio, e.motivo,
             p.nombres || ' ' || p.apellidos AS paciente, p.expediente,
-            (SELECT COUNT(*) FROM consumo_paciente WHERE episodio_id = e.id AND factura_detalle_id IS NULL) AS consumos_pendientes
+            (SELECT COUNT(*) FROM consumo_paciente WHERE episodio_id = e.id AND factura_detalle_id IS NULL AND institucion_id = ?) AS consumos_pendientes
        FROM episodio_atencion e
-       JOIN paciente p ON p.id = e.paciente_id
+       JOIN paciente p ON p.id = e.paciente_id AND p.institucion_id = ?
       WHERE ${filt.join(" AND ")}
       ORDER BY e.fecha_inicio DESC
       LIMIT 200`
   )
-    .bind(...binds)
+    .bind(instId, instId, ...binds)
     .all();
   return c.json({ data: results });
 });
 
 // === Episodios ===
 app.post("/:id/episodios", requireRole("admin", "medico", "enfermeria"), async (c) => {
+  const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
   const b = await c.req.json().catch(() => ({}));
   const r = await c.env.DB.prepare(
-    `INSERT INTO episodio_atencion (paciente_id, area_id, medico_id, enfermera_responsable_id, motivo)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO episodio_atencion (paciente_id, area_id, medico_id, enfermera_responsable_id, motivo, institucion_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, b.area_id ?? null, b.medico_id ?? null, b.enfermera_responsable_id ?? null, b.motivo ?? null)
+    .bind(id, b.area_id ?? null, b.medico_id ?? null, b.enfermera_responsable_id ?? null, b.motivo ?? null, instId)
     .run();
   return c.json({ id: r.meta.last_row_id });
 });
 
 app.post("/episodios/:id/cerrar", requireRole("admin", "medico", "enfermeria"), async (c) => {
+  const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
   await c.env.DB.prepare(
-    `UPDATE episodio_atencion SET estado='cerrado', fecha_fin=datetime('now') WHERE id = ?`
+    `UPDATE episodio_atencion SET estado='cerrado', fecha_fin=datetime('now') WHERE id = ? AND institucion_id = ?`
   )
-    .bind(id)
+    .bind(id, instId)
     .run();
   return c.json({ ok: true });
 });
@@ -243,9 +256,10 @@ app.post(
   "/episodios/:id/solicitar-alta",
   requireRole("admin", "enfermeria", "medico"),
   async (c) => {
+    const instId = getInstId(c);
     const id = parseInt(c.req.param("id"), 10);
-    const ep = await c.env.DB.prepare(`SELECT estado FROM episodio_atencion WHERE id = ?`)
-      .bind(id)
+    const ep = await c.env.DB.prepare(`SELECT estado FROM episodio_atencion WHERE id = ? AND institucion_id = ?`)
+      .bind(id, instId)
       .first<{ estado: string }>();
     if (!ep) return c.json({ error: "no_encontrado" }, 404);
     if (ep.estado !== "activo") return c.json({ error: "episodio_no_activo" }, 400);
@@ -254,9 +268,9 @@ app.post(
       `UPDATE episodio_atencion
           SET alta_solicitada_en = datetime('now'),
               alta_solicitada_por = ?
-        WHERE id = ?`
+        WHERE id = ? AND institucion_id = ?`
     )
-      .bind(c.get("session")!.usuario_id, id)
+      .bind(c.get("session")!.usuario_id, id, instId)
       .run();
     return c.json({ ok: true });
   }
@@ -267,11 +281,12 @@ app.post(
   "/episodios/:id/cancelar-alta",
   requireRole("admin", "enfermeria", "medico"),
   async (c) => {
+    const instId = getInstId(c);
     const id = parseInt(c.req.param("id"), 10);
     await c.env.DB.prepare(
-      `UPDATE episodio_atencion SET alta_solicitada_en=NULL, alta_solicitada_por=NULL WHERE id=?`
+      `UPDATE episodio_atencion SET alta_solicitada_en=NULL, alta_solicitada_por=NULL WHERE id=? AND institucion_id=?`
     )
-      .bind(id)
+      .bind(id, instId)
       .run();
     return c.json({ ok: true });
   }
