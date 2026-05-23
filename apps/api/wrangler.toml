@@ -3,6 +3,17 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Rutas de dominio personalizado
+# app.worke.net       → institución principal
+# *.app.worke.net     → slug = subdomain (p.ej. bloom.app.worke.net → slug "bloom")
+[[routes]]
+pattern = "app.worke.net/*"
+zone_name = "worke.net"
+
+[[routes]]
+pattern = "*.app.worke.net/*"
+zone_name = "worke.net"
+
 [vars]
 APP_ENV = "production"
 SESSION_TTL_SECONDS = "28800"

@@ -2,6 +2,13 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
+function getClientLabel(): string | null {
+  const host = window.location.hostname;
+  if (host.includes("localhost") || host.includes("workers.dev")) return null;
+  const parts = host.split(".");
+  return parts.length >= 4 ? parts[0] : null;
+}
+
 export default function LoginPage() {
   const { login, user } = useAuth();
   const nav = useNavigate();
@@ -9,6 +16,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const clientLabel = getClientLabel();
 
   if (user) {
     nav("/", { replace: true });
@@ -32,7 +40,13 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-100">
       <form onSubmit={onSubmit} className="card w-full max-w-sm space-y-4">
         <h1 className="text-xl font-semibold">AIS Management</h1>
-        <p className="text-sm text-slate-500">Inicie sesion para continuar</p>
+        {clientLabel ? (
+          <p className="text-sm text-slate-500">
+            Acceso para <span className="font-medium text-slate-700 capitalize">{clientLabel}</span>
+          </p>
+        ) : (
+          <p className="text-sm text-slate-500">Inicie sesion para continuar</p>
+        )}
         <div>
           <label className="text-sm font-medium">Email</label>
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -52,7 +66,7 @@ export default function LoginPage() {
           {loading ? "Validando..." : "Ingresar"}
         </button>
         <p className="text-xs text-slate-400">
-          Primera vez? Use <code>POST /api/auth/bootstrap</code> para crear el admin inicial.
+          Primera vez? Use <code>POST /api/auth/bootstrap</code> con el slug de la institución.
         </p>
       </form>
     </div>
