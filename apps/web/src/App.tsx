@@ -18,6 +18,7 @@ import Atencion from "./pages/Atencion";
 import Hospitalizacion from "./pages/Hospitalizacion";
 import Gastos from "./pages/Gastos";
 import Reportes from "./pages/Reportes";
+import Farmacia from "./pages/Farmacia";
 
 function Protected({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth();
@@ -61,6 +62,7 @@ function AppRoutes() {
         <Route path="hospitalizacion" element={<Hospitalizacion />} />
         <Route path="gastos" element={<Gastos />} />
         <Route path="reportes" element={<Reportes />} />
+        <Route path="farmacia" element={<Farmacia />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

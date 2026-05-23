@@ -1,15 +1,15 @@
+import { useEffect, useState } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth, hasRole } from "../lib/auth";
+import { api } from "../lib/api";
 
 const menu = [
-  { to: "/", label: "Inicio", roles: [] },
+  { to: "/", label: "Inicio", roles: [] as string[] },
   { to: "/atencion", label: "Atencion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
   { to: "/hospitalizacion", label: "Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"] },
-  { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"] },
-  { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"] },
-  { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"] },
+  { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones" as const },
   { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"] },
-  { to: "/enfermeria", label: "Enfermeria", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
+  { to: "/enfermeria", label: "Enfermeria (consumos directos)", roles: ["admin", "enfermeria", "medico", "farmaceutico"] },
   { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"] },
   { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"] },
   { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"] },
@@ -21,6 +21,19 @@ const menu = [
 
 export default function Layout() {
   const { user, logout } = useAuth();
+  const [reqPend, setReqPend] = useState<number>(0);
+
+  useEffect(() => {
+    let stop = false;
+    const cargar = () =>
+      api.get<{ n: number }>("/api/requisiciones/_pendientes_count")
+        .then((r) => { if (!stop) setReqPend(r.n); })
+        .catch(() => {});
+    cargar();
+    const t = setInterval(cargar, 30000); // refresca cada 30s
+    return () => { stop = true; clearInterval(t); };
+  }, []);
+
   return (
     <div className="min-h-screen flex">
       <aside className="w-56 bg-slate-900 text-white p-4 flex flex-col">
@@ -34,10 +47,13 @@ export default function Layout() {
                 to={m.to}
                 end={m.to === "/"}
                 className={({ isActive }) =>
-                  `block px-3 py-2 rounded text-sm ${isActive ? "bg-blue-600" : "hover:bg-slate-800"}`
+                  `flex justify-between items-center px-3 py-2 rounded text-sm ${isActive ? "bg-blue-600" : "hover:bg-slate-800"}`
                 }
               >
-                {m.label}
+                <span>{m.label}</span>
+                {(m as any).badge === "requisiciones" && reqPend > 0 && (
+                  <span className="bg-red-500 text-white text-xs px-1.5 rounded-full">{reqPend}</span>
+                )}
               </NavLink>
             ))}
         </nav>

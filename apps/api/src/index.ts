@@ -16,6 +16,7 @@ import usuarios from "./routes/usuarios";
 import habitaciones from "./routes/habitaciones";
 import gastos from "./routes/gastos";
 import reportes from "./routes/reportes";
+import requisiciones from "./routes/requisiciones";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
@@ -66,6 +67,7 @@ app.route("/api/usuarios", usuarios);
 app.route("/api/habitaciones", habitaciones);
 app.route("/api/gastos", gastos);
 app.route("/api/reportes", reportes);
+app.route("/api/requisiciones", requisiciones);
 
 app.onError((err, c) => {
   console.error(err);

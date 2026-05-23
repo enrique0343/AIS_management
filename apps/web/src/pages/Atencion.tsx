@@ -21,11 +21,11 @@ type EnAtencion = {
 
 type CargoTipo = "servicios" | "laboratorio" | "imagenes" | "medicamentos";
 
-const cargoConfig: Record<CargoTipo, { label: string; prefijos: string; color: string; descripcion: string }> = {
-  servicios: { label: "Servicios", prefijos: "SVC,QUI", color: "bg-purple-600 hover:bg-purple-700", descripcion: "Consultas, servicios hospitalarios, quirurgicos" },
-  laboratorio: { label: "Laboratorio", prefijos: "LAB", color: "bg-teal-600 hover:bg-teal-700", descripcion: "Examenes de laboratorio clinico" },
-  imagenes: { label: "Imagenes", prefijos: "RAD", color: "bg-indigo-600 hover:bg-indigo-700", descripcion: "Radiologia y estudios de imagen" },
-  medicamentos: { label: "Medicamentos / Insumos", prefijos: "MED,INS", color: "bg-emerald-600 hover:bg-emerald-700", descripcion: "Descarga del stock por FEFO con lote/vencimiento" },
+const cargoConfig: Record<CargoTipo, { label: string; prefijos: string; color: string; descripcion: string; tipo: "cargo" | "requisicion" }> = {
+  servicios: { label: "Servicios", prefijos: "SVC,QUI", color: "bg-purple-600 hover:bg-purple-700", descripcion: "Consultas, servicios hospitalarios, quirurgicos", tipo: "cargo" },
+  laboratorio: { label: "Laboratorio", prefijos: "LAB", color: "bg-teal-600 hover:bg-teal-700", descripcion: "Examenes de laboratorio clinico", tipo: "cargo" },
+  imagenes: { label: "Imagenes", prefijos: "RAD", color: "bg-indigo-600 hover:bg-indigo-700", descripcion: "Radiologia y estudios de imagen", tipo: "cargo" },
+  medicamentos: { label: "Solicitar a farmacia", prefijos: "MED,INS", color: "bg-emerald-600 hover:bg-emerald-700", descripcion: "Requisicion a farmacia interna (sin elegir lote)", tipo: "requisicion" },
 };
 
 export default function Atencion() {
@@ -64,18 +64,32 @@ export default function Atencion() {
   };
 
   const submitCargo = async () => {
-    if (!sel || !cargoForm.producto_id || !cargoForm.area_id) {
-      alert("Producto y area requeridos");
+    if (!sel || !cargo || !cargoForm.producto_id) {
+      alert("Producto requerido");
       return;
     }
     try {
-      await api.post("/api/enfermeria/consumos", {
-        episodio_id: sel.episodio_id,
-        producto_id: Number(cargoForm.producto_id),
-        area_id: Number(cargoForm.area_id),
-        cantidad: Number(cargoForm.cantidad),
-        observaciones: cargoForm.observaciones || null,
-      });
+      if (cargoConfig[cargo].tipo === "requisicion") {
+        // Crear requisicion a farmacia (sin elegir lote)
+        await api.post("/api/requisiciones", {
+          paciente_id: sel.id,
+          episodio_id: sel.episodio_id,
+          area_solicitante_id: cargoForm.area_id ? Number(cargoForm.area_id) : null,
+          prioridad: cargoForm.prioridad ?? "normal",
+          observaciones: cargoForm.observaciones || null,
+          detalles: [{ producto_id: Number(cargoForm.producto_id), cantidad_solicitada: Number(cargoForm.cantidad) }],
+        });
+        alert("Requisicion enviada a farmacia interna.");
+      } else {
+        if (!cargoForm.area_id) { alert("Area requerida"); return; }
+        await api.post("/api/enfermeria/consumos", {
+          episodio_id: sel.episodio_id,
+          producto_id: Number(cargoForm.producto_id),
+          area_id: Number(cargoForm.area_id),
+          cantidad: Number(cargoForm.cantidad),
+          observaciones: cargoForm.observaciones || null,
+        });
+      }
       setCargo(null);
       refrescar();
     } catch (e: any) {
@@ -277,7 +291,7 @@ export default function Atencion() {
         </div>
       )}
 
-      {/* Modal de cargo */}
+      {/* Modal de cargo / requisicion */}
       {cargo && sel && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
           <div className="card w-full max-w-2xl space-y-3 max-h-[90vh] overflow-auto">
@@ -286,27 +300,72 @@ export default function Atencion() {
               <button className="btn-secondary" onClick={() => setCargo(null)}>Cerrar</button>
             </div>
             <p className="text-xs text-slate-500">{cargoConfig[cargo].descripcion}</p>
-            <select className="input" value={cargoForm.producto_id} onChange={(e) => setCargoForm({ ...cargoForm, producto_id: e.target.value })}>
-              <option value="">-- Seleccionar --</option>
-              {productos.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.codigo} - {p.nombre} (${Number(p.precio_venta).toFixed(2)})
-                  {!p.requiere_lote_vencimiento ? "" : ` - Stock: ${p.existencia_total}`}
-                </option>
-              ))}
-            </select>
-            <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
-              <option value="">-- Area de donde se dispensa --</option>
-              {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-            </select>
-            <input className="input" type="number" step="0.01" placeholder="Cantidad" value={cargoForm.cantidad} onChange={(e) => setCargoForm({ ...cargoForm, cantidad: e.target.value })} />
-            <input className="input" placeholder="Observaciones (opcional)" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
-            {cargo === "medicamentos" && (
-              <p className="text-xs text-amber-700">El sistema descontara del stock por FEFO (primer lote por vencer) y registrara el movimiento en inventario.</p>
+
+            <div>
+              <label className="text-xs font-medium">Producto</label>
+              <select className="input" value={cargoForm.producto_id} onChange={(e) => setCargoForm({ ...cargoForm, producto_id: e.target.value })}>
+                <option value="">-- Seleccionar --</option>
+                {productos.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.codigo} - {p.nombre} (${Number(p.precio_venta).toFixed(2)})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {cargoConfig[cargo].tipo === "cargo" && (
+              <div>
+                <label className="text-xs font-medium">Area donde se presta el servicio</label>
+                <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
+                  <option value="">-- Seleccionar --</option>
+                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                </select>
+              </div>
             )}
+
+            {cargoConfig[cargo].tipo === "requisicion" && (
+              <>
+                <div>
+                  <label className="text-xs font-medium">Area solicitante (opcional)</label>
+                  <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
+                    <option value="">-- No especificada --</option>
+                    {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Prioridad</label>
+                  <select className="input" value={cargoForm.prioridad ?? "normal"} onChange={(e) => setCargoForm({ ...cargoForm, prioridad: e.target.value })}>
+                    <option value="normal">Normal</option>
+                    <option value="urgente">Urgente</option>
+                    <option value="stat">STAT (inmediato)</option>
+                  </select>
+                </div>
+              </>
+            )}
+
+            <div>
+              <label className="text-xs font-medium">Cantidad</label>
+              <input className="input" type="number" step="0.01" value={cargoForm.cantidad} onChange={(e) => setCargoForm({ ...cargoForm, cantidad: e.target.value })} />
+            </div>
+            <div>
+              <label className="text-xs font-medium">Observaciones</label>
+              <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
+            </div>
+
+            {cargoConfig[cargo].tipo === "requisicion" ? (
+              <p className="text-xs text-amber-700">
+                Esta solicitud llegara a la bandeja de farmacia interna. Farmacia validara el lote y despachara.
+                El cargo al paciente se registra automaticamente al despachar.
+              </p>
+            ) : cargo === "servicios" || cargo === "laboratorio" || cargo === "imagenes" ? (
+              <p className="text-xs text-slate-500">Servicio: se registra como cargo directo al paciente. No descuenta stock.</p>
+            ) : null}
+
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setCargo(null)}>Cancelar</button>
-              <button className="btn" onClick={submitCargo}>Registrar cargo</button>
+              <button className="btn" onClick={submitCargo}>
+                {cargoConfig[cargo].tipo === "requisicion" ? "Enviar a farmacia" : "Registrar cargo"}
+              </button>
             </div>
           </div>
         </div>
