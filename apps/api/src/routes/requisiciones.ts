@@ -41,10 +41,16 @@ app.get("/", async (c) => {
 
 // Conteo de pendientes para badge en menu
 app.get("/_pendientes_count", async (c) => {
-  const r = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM requisicion WHERE estado IN ('pendiente','despachada_parcial')`
-  ).first<{ n: number }>();
-  return c.json({ n: r?.n ?? 0 });
+  const rows = await c.env.DB.prepare(
+    `SELECT estado, COUNT(*) AS n FROM requisicion WHERE estado IN ('pendiente','despachada_parcial') GROUP BY estado`
+  ).all<{ estado: string; n: number }>();
+  const byEstado: Record<string, number> = {};
+  for (const row of rows.results) byEstado[row.estado] = row.n;
+  return c.json({
+    n: (byEstado["pendiente"] ?? 0) + (byEstado["despachada_parcial"] ?? 0),
+    pendiente: byEstado["pendiente"] ?? 0,
+    despachada_parcial: byEstado["despachada_parcial"] ?? 0,
+  });
 });
 
 // Detalle

@@ -54,14 +54,20 @@ type Estado = "pendiente" | "despachada_parcial" | "despachada" | "rechazada" | 
 function PanelRequisiciones({ onChange }: { onChange: () => void }) {
   const [estado, setEstado] = useState<Estado>("pendiente");
   const [items, setItems] = useState<any[]>([]);
+  const [conteos, setConteos] = useState<{ pendiente: number; despachada_parcial: number }>({ pendiente: 0, despachada_parcial: 0 });
   const [det, setDet] = useState<{ requisicion: any; detalles: any[] } | null>(null);
   // assignations[detalle_id] = { lotes: [{ lote_id, cantidad }] }
   const [assign, setAssign] = useState<Record<number, { lote_id: number | null; cantidad: number }[]>>({});
   // catalogo de lotes disponibles cargado por linea
   const [lotesPorLinea, setLotesPorLinea] = useState<Record<number, any[]>>({});
 
+  const loadConteos = () =>
+    api.get<{ pendiente: number; despachada_parcial: number }>("/api/requisiciones/_pendientes_count")
+      .then((r) => setConteos({ pendiente: r.pendiente, despachada_parcial: r.despachada_parcial }));
+
   const load = () => api.get<{ data: any[] }>(`/api/requisiciones?estado=${estado}`).then((r) => setItems(r.data));
   useEffect(() => { load(); }, [estado]);
+  useEffect(() => { loadConteos(); }, []);
 
   const abrir = async (id: number) => {
     const r = await api.get<any>(`/api/requisiciones/${id}`);
@@ -120,6 +126,7 @@ function PanelRequisiciones({ onChange }: { onChange: () => void }) {
       }
       setDet(null);
       load();
+      loadConteos();
       onChange();
     } catch (e: any) { alert(e.message); }
   };
@@ -131,6 +138,7 @@ function PanelRequisiciones({ onChange }: { onChange: () => void }) {
     await api.post(`/api/requisiciones/${det.requisicion.id}/rechazar`, { motivo });
     setDet(null);
     load();
+    loadConteos();
     onChange();
   };
 
@@ -150,16 +158,24 @@ function PanelRequisiciones({ onChange }: { onChange: () => void }) {
     <div className="space-y-3">
       {/* Botones de estado con colores fuertes */}
       <div className="flex flex-wrap gap-2">
-        {estados.map((e) => (
-          <button
-            key={e.key}
-            onClick={() => setEstado(e.key)}
-            className={`px-4 py-2 rounded-md text-sm font-medium ${estado === e.key ? e.color : "bg-white border border-slate-300 text-slate-600 hover:bg-slate-50"}`}
-          >
-            {e.label}
-          </button>
-        ))}
-        <button className="btn-secondary ml-auto" onClick={load}>Refrescar</button>
+        {estados.map((e) => {
+          const count = e.key === "pendiente" ? conteos.pendiente : e.key === "despachada_parcial" ? conteos.despachada_parcial : 0;
+          return (
+            <button
+              key={e.key}
+              onClick={() => setEstado(e.key)}
+              className={`relative px-4 py-2 rounded-md text-sm font-medium ${estado === e.key ? e.color : "bg-white border border-slate-300 text-slate-600 hover:bg-slate-50"}`}
+            >
+              {e.label}
+              {count > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[1.2rem] h-5 px-1 flex items-center justify-center rounded-full bg-red-600 text-white text-xs font-bold leading-none shadow">
+                  {count}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        <button className="btn-secondary ml-auto" onClick={() => { load(); loadConteos(); }}>Refrescar</button>
       </div>
 
       {!items.length && (
