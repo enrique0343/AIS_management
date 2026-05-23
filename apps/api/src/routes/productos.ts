@@ -69,6 +69,24 @@ app.get("/_siguiente-codigo", async (c) => {
   });
 });
 
+// Lotes disponibles en un area (para que farmacia elija al despachar)
+app.get("/:id/lotes-disponibles", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const areaId = c.req.query("area_id");
+  if (!areaId) return c.json({ error: "area_id_requerida" }, 400);
+  const { results } = await c.env.DB.prepare(
+    `SELECT e.id AS existencia_id, e.lote_id, l.numero_lote, l.fecha_vencimiento,
+            e.cantidad
+       FROM existencia e
+       LEFT JOIN lote l ON l.id = e.lote_id
+      WHERE e.producto_id = ? AND e.area_id = ? AND e.cantidad > 0
+      ORDER BY (l.fecha_vencimiento IS NULL) ASC, l.fecha_vencimiento ASC, e.lote_id ASC`
+  )
+    .bind(id, parseInt(areaId, 10))
+    .all();
+  return c.json({ data: results });
+});
+
 app.get("/:id", async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   const p = await c.env.DB.prepare(`SELECT * FROM producto WHERE id = ?`).bind(id).first();

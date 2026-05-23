@@ -155,16 +155,26 @@ app.post(
   }
 );
 
-// Despachar (farmacia) - descarga FEFO desde area_farmacia, crea consumo_paciente
+// Despachar (farmacia). El farmaceutico ELIGE el lote(s) por linea.
+// Si una linea no especifica lotes, fallback a FEFO automatico.
+//
+// body: {
+//   items?: [{
+//     id: number,                          // requisicion_detalle.id
+//     lotes?: [{ lote_id: number|null, cantidad: number }],  // eleccion manual
+//     cantidad_despachada?: number          // si NO se manda lotes, FEFO con este total
+//   }]
+// }
 app.post(
   "/:id/despachar",
   requireRole("admin", "jefe_farmacia_central", "farmaceutico"),
   async (c) => {
     const id = parseInt(c.req.param("id"), 10);
     const b = await c.req.json().catch(() => ({}));
-    const override: Record<number, number> | undefined = b?.items
-      ? Object.fromEntries((b.items as any[]).map((i) => [i.id, Number(i.cantidad_despachada)]))
-      : undefined;
+    const itemsByDetalle: Record<number, { lotes?: { lote_id: number | null; cantidad: number }[]; cantidad_despachada?: number }> = {};
+    if (Array.isArray(b?.items)) {
+      for (const it of b.items) itemsByDetalle[Number(it.id)] = it;
+    }
 
     const req = await c.env.DB.prepare(
       `SELECT r.*, p.id AS paciente_id_real
@@ -177,7 +187,7 @@ app.post(
       return c.json({ error: "estado_no_despachable", estado: req.estado }, 400);
     }
 
-    // Asegurar episodio activo
+    // Asegurar episodio activo (la cuenta hospitalaria se actualiza via consumo_paciente)
     let episodioId: number | null = req.episodio_id;
     if (!episodioId) {
       const ep = await c.env.DB.prepare(
@@ -211,72 +221,81 @@ app.post(
     let huboParcial = false;
     let huboCompleto = false;
 
+    const ejecutarStep = async (productoId: number, loteId: number | null, cantidad: number, cpp: number, precioVenta: number, refTexto: string) => {
+      // Validar que el lote tenga stock en el area_farmacia
+      const ex = await c.env.DB.prepare(
+        `SELECT cantidad FROM existencia
+          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+      )
+        .bind(productoId, req.area_farmacia_id, loteId)
+        .first<{ cantidad: number }>();
+      if (!ex || ex.cantidad < cantidad) {
+        throw new Error(`Stock insuficiente en lote seleccionado (disponible ${ex?.cantidad ?? 0})`);
+      }
+      await c.env.DB.prepare(
+        `UPDATE existencia SET cantidad = cantidad - ?
+          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+      )
+        .bind(cantidad, productoId, req.area_farmacia_id, loteId)
+        .run();
+      await c.env.DB.prepare(
+        `INSERT INTO movimiento_inventario
+           (tipo, producto_id, lote_id, area_origen_id, cantidad, costo_unitario,
+            usuario_id, referencia_tipo, referencia_id, observaciones)
+         VALUES ('consumo_paciente', ?, ?, ?, ?, ?, ?, 'requisicion', ?, ?)`
+      )
+        .bind(productoId, loteId, req.area_farmacia_id, cantidad, cpp, c.get("session")!.usuario_id, id, refTexto)
+        .run();
+      await c.env.DB.prepare(
+        `INSERT INTO consumo_paciente
+           (episodio_id, producto_id, lote_id, area_id, cantidad,
+            costo_unitario_snapshot, precio_venta_snapshot, usuario_id, observaciones)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(episodioId, productoId, loteId, req.area_farmacia_id, cantidad, cpp, precioVenta, c.get("session")!.usuario_id, refTexto)
+        .run();
+    };
+
     for (const d of detalles.results ?? []) {
       const pendiente = Number(d.cantidad_solicitada) - Number(d.cantidad_despachada);
       if (pendiente <= 0) continue;
-
-      const aDespachar = override?.[d.id] !== undefined
-        ? Math.min(override[d.id], pendiente)
-        : pendiente;
-      if (aDespachar <= 0) continue;
+      const item = itemsByDetalle[d.id];
 
       try {
-        const plan = await planFEFO(c.env, d.producto_id, req.area_farmacia_id, aDespachar);
-        for (const step of plan) {
-          // Descontar de farmacia
-          await c.env.DB.prepare(
-            `UPDATE existencia SET cantidad = cantidad - ?
-              WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
-          )
-            .bind(step.tomar, d.producto_id, req.area_farmacia_id, step.lote_id)
-            .run();
-          // Movimiento (consumo)
-          await c.env.DB.prepare(
-            `INSERT INTO movimiento_inventario
-               (tipo, producto_id, lote_id, area_origen_id, cantidad, costo_unitario,
-                usuario_id, referencia_tipo, referencia_id, observaciones)
-             VALUES ('consumo_paciente', ?, ?, ?, ?, ?, ?, 'requisicion', ?, ?)`
-          )
-            .bind(
-              d.producto_id,
-              step.lote_id,
-              req.area_farmacia_id,
-              step.tomar,
-              d.cpp,
-              c.get("session")!.usuario_id,
-              id,
-              `Despacho req. ${req.numero}`
-            )
-            .run();
-          // Consumo del paciente
-          await c.env.DB.prepare(
-            `INSERT INTO consumo_paciente
-               (episodio_id, producto_id, lote_id, area_id, cantidad,
-                costo_unitario_snapshot, precio_venta_snapshot, usuario_id, observaciones)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-            .bind(
-              episodioId,
-              d.producto_id,
-              step.lote_id,
-              req.area_farmacia_id,
-              step.tomar,
-              d.cpp,
-              d.precio_venta,
-              c.get("session")!.usuario_id,
-              `Req ${req.numero}`
-            )
-            .run();
+        let totalDespachado = 0;
+        if (item?.lotes && item.lotes.length) {
+          // Despacho con lotes elegidos manualmente
+          const total = item.lotes.reduce((s, x) => s + Number(x.cantidad), 0);
+          if (total > pendiente) throw new Error(`Cantidad asignada (${total}) excede pendiente (${pendiente})`);
+          for (const l of item.lotes) {
+            const cant = Number(l.cantidad);
+            if (cant <= 0) continue;
+            await ejecutarStep(d.producto_id, l.lote_id ?? null, cant, d.cpp, d.precio_venta, `Despacho req. ${req.numero}`);
+            totalDespachado += cant;
+          }
+        } else {
+          // Fallback: FEFO automatico
+          const aDespachar = item?.cantidad_despachada !== undefined
+            ? Math.min(Number(item.cantidad_despachada), pendiente)
+            : pendiente;
+          if (aDespachar <= 0) continue;
+          const plan = await planFEFO(c.env, d.producto_id, req.area_farmacia_id, aDespachar);
+          for (const step of plan) {
+            await ejecutarStep(d.producto_id, step.lote_id, step.tomar, d.cpp, d.precio_venta, `Despacho req. ${req.numero}`);
+            totalDespachado += step.tomar;
+          }
         }
-        await c.env.DB.prepare(
-          `UPDATE requisicion_detalle SET cantidad_despachada = cantidad_despachada + ? WHERE id = ?`
-        )
-          .bind(aDespachar, d.id)
-          .run();
 
-        const completo = aDespachar >= pendiente;
-        if (completo) huboCompleto = true; else huboParcial = true;
-        resultados.push({ detalle_id: d.id, despachado: aDespachar, ok: true });
+        if (totalDespachado > 0) {
+          await c.env.DB.prepare(
+            `UPDATE requisicion_detalle SET cantidad_despachada = cantidad_despachada + ? WHERE id = ?`
+          )
+            .bind(totalDespachado, d.id)
+            .run();
+          const completo = totalDespachado >= pendiente;
+          if (completo) huboCompleto = true; else huboParcial = true;
+          resultados.push({ detalle_id: d.id, despachado: totalDespachado, ok: true });
+        }
       } catch (e: any) {
         resultados.push({ detalle_id: d.id, despachado: 0, ok: false, error: e.message });
         huboParcial = true;
