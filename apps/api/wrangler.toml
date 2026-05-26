@@ -3,17 +3,15 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# RUTAS DOMINIO PERSONALIZADO — descomentar cuando worke.net esté activo en Cloudflare
 # app.worke.net       → institución principal
 # *.app.worke.net     → slug = subdominio (bloom.app.worke.net → slug "bloom")
-#
-# [[routes]]
-# pattern = "app.worke.net/*"
-# zone_name = "worke.net"
-#
-# [[routes]]
-# pattern = "*.app.worke.net/*"
-# zone_name = "worke.net"
+[[routes]]
+pattern = "app.worke.net/*"
+zone_name = "worke.net"
+
+[[routes]]
+pattern = "*.app.worke.net/*"
+zone_name = "worke.net"
 
 [vars]
 APP_ENV = "production"
