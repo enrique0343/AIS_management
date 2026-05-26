@@ -18,13 +18,18 @@ type AuthCtx = {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
+const SYSTEM_SUBDOMAINS = new Set(["ais", "app", "www", "api"]);
+
 function resolveSlug(): string | undefined {
   const host = window.location.hostname;
   if (host.includes("localhost") || host.includes("workers.dev")) return undefined;
   const parts = host.split(".");
-  // bloom.app.worke.net → 4 partes → slug "bloom"
-  // app.worke.net       → 3 partes → principal (undefined → backend usa default)
-  return parts.length >= 4 ? parts[0] : undefined;
+  // bloom.worke.net → 3 partes, parts[0] = "bloom" → slug cliente
+  // ais.worke.net   → 3 partes, parts[0] = "ais"   → principal (sin slug)
+  if (parts.length === 3 && !SYSTEM_SUBDOMAINS.has(parts[0].toLowerCase())) {
+    return parts[0].toLowerCase();
+  }
+  return undefined;
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {

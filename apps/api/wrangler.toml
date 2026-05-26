@@ -3,15 +3,15 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# app.worke.net — Cloudflare gestiona el DNS automáticamente con custom_domains
+# ais.worke.net       → institución principal (Cloudflare gestiona DNS)
+# bloom.worke.net     → cliente "bloom"       (cubierto por *.worke.net SSL)
+# clinicax.worke.net  → cliente "clinicax"    (cubierto por *.worke.net SSL)
 [[custom_domains]]
-pattern = "app.worke.net"
+pattern = "ais.worke.net"
 
-# *.app.worke.net — requiere registro CNAME en DNS primero; descomentar después
-# Paso: Cloudflare → worke.net → DNS → agregar CNAME *.app → app.worke.net (Proxied)
-# [[routes]]
-# pattern = "*.app.worke.net/*"
-# zone_name = "worke.net"
+[[routes]]
+pattern = "*.worke.net/*"
+zone_name = "worke.net"
 
 [vars]
 APP_ENV = "production"
