@@ -160,6 +160,15 @@ app.post("/instituciones", requireRole("super_admin"), async (c) => {
   return c.json({ ok: true, institucion_id: newInstId, slug: body.slug });
 });
 
+/** Endpoint público — devuelve el nombre de la institución del dominio actual. */
+app.get("/info", async (c) => {
+  const slug = resolveSlug(undefined, c.req.header("Host"));
+  const inst = await c.env.DB.prepare(
+    `SELECT nombre FROM institucion WHERE slug = ? AND activa = 1`
+  ).bind(slug).first<{ nombre: string }>();
+  return c.json({ nombre: inst?.nombre ?? "AIS Management" });
+});
+
 app.get("/instituciones", requireRole("super_admin"), async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT id, slug, nombre, nit, activa, creado_en FROM institucion ORDER BY id`
