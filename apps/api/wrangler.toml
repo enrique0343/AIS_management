@@ -3,12 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# ais.worke.net → institución principal (registro A proxied ya existe en Cloudflare DNS)
-# Los custom domains de clientes (psc.ais.worke.net, etc.) se agregan vía
-# Cloudflare Dashboard → Workers & Pages → ais-management-api → Domains & Routes
-[[routes]]
-pattern = "ais.worke.net/*"
-zone_name = "worke.net"
+# Dominios configurados via Cloudflare Dashboard (no via wrangler.toml):
+# El API token de CI solo tiene Workers Scripts:Edit, no Zone:Workers Routes:Edit.
+# Ir a: Workers & Pages → ais-management-api → Settings → Domains & Routes
+#   → Add Custom Domain: ais.worke.net
+#   → Add Custom Domain: psc.ais.worke.net  (y cada cliente nuevo)
 
 [vars]
 APP_ENV = "production"
