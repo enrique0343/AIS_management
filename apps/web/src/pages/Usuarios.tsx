@@ -14,6 +14,9 @@ export default function Usuarios() {
   const [showNuevo, setShowNuevo] = useState(false);
   const [form, setForm] = useState<{ email: string; password: string; nombre: string; roles: string[] }>({ email: "", password: "", nombre: "", roles: [] });
 
+  // Editar usuario modal
+  const [editModal, setEditModal] = useState<{ user: User; email: string; nombre: string; error: string } | null>(null);
+
   // Editar roles modal
   const [rolesModal, setRolesModal] = useState<{ user: User; selected: string[] } | null>(null);
 
@@ -58,6 +61,20 @@ export default function Usuarios() {
     setShowNuevo(false);
     setForm({ email: "", password: "", nombre: "", roles: [] });
     load();
+  };
+
+  const abrirEditar = (u: User) => setEditModal({ user: u, email: u.email, nombre: u.nombre, error: "" });
+
+  const guardarEditar = async () => {
+    if (!editModal) return;
+    if (!editModal.email || !editModal.nombre) { setEditModal({ ...editModal, error: "Email y nombre requeridos" }); return; }
+    try {
+      await api.put(`/api/usuarios/${editModal.user.id}`, { email: editModal.email, nombre: editModal.nombre });
+      setEditModal(null);
+      load();
+    } catch (e: any) {
+      setEditModal({ ...editModal, error: e.message ?? "Error al guardar" });
+    }
   };
 
   const abrirRoles = (u: User) => {
@@ -139,6 +156,7 @@ export default function Usuarios() {
                     </span>
                   </td>
                   <td className="space-x-1 whitespace-nowrap">
+                    <button className="btn-secondary text-xs" onClick={() => abrirEditar(u)}>Editar</button>
                     <button className="btn-secondary text-xs" onClick={() => abrirRoles(u)}>Roles</button>
                     <button className="btn-secondary text-xs" onClick={() => abrirReset(u)}>Clave</button>
                     {u.activo === 1
@@ -235,6 +253,30 @@ export default function Usuarios() {
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setShowNuevo(false)}>Cancelar</button>
               <button className="btn" onClick={submit}>Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== Modal editar usuario ===== */}
+      {editModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-sm space-y-3">
+            <h2 className="font-semibold">Editar usuario</h2>
+            <div>
+              <label className="text-xs text-slate-500">Nombre</label>
+              <input className="input" value={editModal.nombre}
+                onChange={(e) => setEditModal({ ...editModal, nombre: e.target.value, error: "" })} />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">Email</label>
+              <input className="input" type="email" value={editModal.email}
+                onChange={(e) => setEditModal({ ...editModal, email: e.target.value, error: "" })} />
+            </div>
+            {editModal.error && <div className="text-xs text-red-600">{editModal.error}</div>}
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setEditModal(null)}>Cancelar</button>
+              <button className="btn" onClick={guardarEditar}>Guardar</button>
             </div>
           </div>
         </div>

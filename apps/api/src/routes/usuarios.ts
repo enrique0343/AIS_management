@@ -57,6 +57,30 @@ app.post("/", async (c) => {
   return c.json({ id: usuarioId });
 });
 
+app.put("/:id", async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.email || !b?.nombre) return c.json({ error: "email_y_nombre_requeridos" }, 400);
+  const existing = await c.env.DB.prepare(
+    `SELECT id FROM usuario WHERE email = ? AND institucion_id = ? AND id != ?`
+  ).bind(b.email, instId, id).first();
+  if (existing) return c.json({ error: "email_ya_existe" }, 409);
+  await c.env.DB.prepare(
+    `UPDATE usuario SET email = ?, nombre = ? WHERE id = ? AND institucion_id = ?`
+  ).bind(b.email, b.nombre, id, instId).run();
+  await logAudit(c.env, {
+    usuario_id: c.get("session")!.usuario_id,
+    accion: "editar_usuario",
+    entidad: "usuario",
+    entidad_id: id,
+    payload: { email: b.email, nombre: b.nombre },
+    ip: c.get("ip"),
+    institucion_id: instId,
+  });
+  return c.json({ ok: true });
+});
+
 app.post("/:id/roles", async (c) => {
   const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
