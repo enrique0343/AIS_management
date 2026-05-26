@@ -2,16 +2,12 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
 
-const SYSTEM_SUBDOMAINS = new Set(["ais", "app", "www", "api"]);
-
 function getClientLabel(): string | null {
   const host = window.location.hostname;
   if (host.includes("localhost") || host.includes("workers.dev")) return null;
   const parts = host.split(".");
-  if (parts.length === 3 && !SYSTEM_SUBDOMAINS.has(parts[0].toLowerCase())) {
-    return parts[0].toLowerCase();
-  }
-  return null;
+  // psi.ais.worke.net → 4 partes → muestra "psi" en el login
+  return parts.length >= 4 ? parts[0].toLowerCase() : null;
 }
 
 export default function LoginPage() {

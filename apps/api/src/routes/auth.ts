@@ -15,9 +15,6 @@ import { requireAuth, requireRole } from "../middleware/auth";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
-// Subdominios reservados del sistema — no son slugs de cliente
-const SYSTEM_SUBDOMAINS = new Set(["ais", "app", "www", "api"]);
-
 /** Resuelve el slug de institución desde el cuerpo o el header Host. */
 function resolveSlug(bodySlug: string | undefined, hostHeader: string | undefined): string {
   if (bodySlug?.trim()) return bodySlug.trim();
@@ -26,11 +23,9 @@ function resolveSlug(bodySlug: string | undefined, hostHeader: string | undefine
       return "principal";
     }
     const parts = hostHeader.split(".");
-    // bloom.worke.net → 3 partes, parts[0] = "bloom" → slug cliente
-    // ais.worke.net   → 3 partes, parts[0] = "ais"   → principal
-    if (parts.length === 3 && !SYSTEM_SUBDOMAINS.has(parts[0].toLowerCase())) {
-      return parts[0].toLowerCase();
-    }
+    // psi.ais.worke.net → 4 partes → parts[0] = "psi" → slug del cliente
+    // ais.worke.net     → 3 partes                    → institución principal
+    if (parts.length >= 4) return parts[0].toLowerCase();
   }
   return "principal";
 }
