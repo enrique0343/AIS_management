@@ -5,7 +5,7 @@ import { api } from "../lib/api";
 
 type MenuItem = {
   to: string; label: string; roles: string[];
-  badge?: "requisiciones" | "alta"; group: "top" | "clinico" | "admin";
+  badge?: "requisiciones" | "alta"; group: "top" | "clinico" | "admin" | "config";
 };
 
 const menu: MenuItem[] = [
@@ -21,12 +21,13 @@ const menu: MenuItem[] = [
   { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },
-  { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"], group: "admin" },
-  { to: "/catalogo-srs", label: "Catalogo SRS", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },
   { to: "/compras", label: "Compras", roles: ["admin", "jefe_farmacia_central"], group: "admin" },
-  { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"], group: "admin" },
-  { to: "/profesionales", label: "Profesionales", roles: ["admin"], group: "admin" },
-  { to: "/usuarios", label: "Usuarios", roles: ["admin"], group: "admin" },
+  // Configuracion
+  { to: "/productos", label: "Productos", roles: ["admin", "jefe_farmacia_central", "farmaceutico"], group: "config" },
+  { to: "/catalogo-srs", label: "Catalogo SRS", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "config" },
+  { to: "/catalogos", label: "Catalogos", roles: ["admin", "jefe_farmacia_central"], group: "config" },
+  { to: "/profesionales", label: "Profesionales", roles: ["admin"], group: "config" },
+  { to: "/usuarios", label: "Usuarios", roles: ["admin"], group: "config" },
 ];
 
 export default function Layout() {
@@ -90,16 +91,17 @@ export default function Layout() {
         </div>
 
         <nav className="flex-1 px-3 overflow-y-auto pb-4">
-          {(["top", "clinico", "admin"] as const).map((group) => {
+          {(["top", "clinico", "admin", "config"] as const).map((group) => {
             const items = menu.filter((m) =>
               m.group === group && (m.roles.length === 0 || hasRole(user, ...m.roles))
             );
             if (!items.length) return null;
+            const labels: Record<string, string> = { clinico: "Clinico", admin: "Administracion", config: "Configuracion" };
             return (
               <div key={group} className="mb-3">
                 {group !== "top" && (
                   <div className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 px-3 pt-3 pb-1">
-                    {group === "clinico" ? "Clinico" : "Administracion"}
+                    {labels[group]}
                   </div>
                 )}
                 <div className="space-y-0.5">

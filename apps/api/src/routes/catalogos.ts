@@ -79,6 +79,19 @@ app.post("/proveedores", requireRole("admin", "jefe_farmacia_central"), async (c
   return c.json({ id: r.meta.last_row_id });
 });
 
+app.put("/proveedores/:id", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE proveedor SET nombre=?, nit=?, contacto=?, telefono=?, email=?, condiciones_pago=? WHERE id=? AND institucion_id=?`
+  )
+    .bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, b.condiciones_pago ?? null, id, instId)
+    .run();
+  return c.json({ ok: true });
+});
+
 app.get("/areas", async (c) => {
   const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(

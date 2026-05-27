@@ -35,17 +35,29 @@ function Section({ children }: { children: ReactNode }) {
   return <div className="card">{children}</div>;
 }
 
+const EMPTY_PROV = { nombre: "", nit: "", contacto: "", telefono: "", email: "", condiciones_pago: "" };
+
 function Proveedores() {
   const [items, setItems] = useState<any[]>([]);
-  const [form, setForm] = useState<any>({ nombre: "", nit: "", contacto: "", telefono: "", email: "", condiciones_pago: "" });
+  const [form, setForm] = useState<any>(EMPTY_PROV);
+  const [editItem, setEditItem] = useState<any | null>(null);
   const load = () => api.get<{ data: any[] }>("/api/catalogos/proveedores").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
+
   const submit = async () => {
     if (!form.nombre) { alert("Nombre requerido"); return; }
     await api.post("/api/catalogos/proveedores", form);
-    setForm({ nombre: "", nit: "", contacto: "", telefono: "", email: "", condiciones_pago: "" });
+    setForm(EMPTY_PROV);
     load();
   };
+
+  const guardarEditar = async () => {
+    if (!editItem?.nombre) { alert("Nombre requerido"); return; }
+    await api.put(`/api/catalogos/proveedores/${editItem.id}`, editItem);
+    setEditItem(null);
+    load();
+  };
+
   return (
     <Section>
       <h3 className="font-semibold mb-2">Nuevo proveedor</h3>
@@ -75,11 +87,53 @@ function Proveedores() {
         <button className="btn" onClick={submit}>+ Agregar proveedor</button>
       </div>
       <table className="table">
-        <thead><tr><th>Nombre</th><th>NIT</th><th>Contacto</th><th>Telefono</th><th>Email</th></tr></thead>
+        <thead><tr><th>Nombre</th><th>NIT</th><th>Contacto</th><th>Telefono</th><th>Email</th><th></th></tr></thead>
         <tbody>{items.map((p) => (
-          <tr key={p.id}><td>{p.nombre}</td><td>{p.nit ?? "-"}</td><td>{p.contacto ?? "-"}</td><td>{p.telefono ?? "-"}</td><td>{p.email ?? "-"}</td></tr>
+          <tr key={p.id}>
+            <td>{p.nombre}</td><td>{p.nit ?? "-"}</td><td>{p.contacto ?? "-"}</td>
+            <td>{p.telefono ?? "-"}</td><td>{p.email ?? "-"}</td>
+            <td><button className="btn-secondary text-xs" onClick={() => setEditItem({ ...p })}>Editar</button></td>
+          </tr>
         ))}</tbody>
       </table>
+
+      {editItem && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-lg space-y-3">
+            <h2 className="font-semibold">Editar proveedor</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="col-span-2">
+                <label className="text-xs text-slate-500">Nombre *</label>
+                <input className="input" value={editItem.nombre} onChange={(e) => setEditItem({ ...editItem, nombre: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">NIT</label>
+                <input className="input" value={editItem.nit ?? ""} onChange={(e) => setEditItem({ ...editItem, nit: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Contacto</label>
+                <input className="input" value={editItem.contacto ?? ""} onChange={(e) => setEditItem({ ...editItem, contacto: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Telefono</label>
+                <input className="input" value={editItem.telefono ?? ""} onChange={(e) => setEditItem({ ...editItem, telefono: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Email</label>
+                <input className="input" type="email" value={editItem.email ?? ""} onChange={(e) => setEditItem({ ...editItem, email: e.target.value })} />
+              </div>
+              <div className="col-span-2">
+                <label className="text-xs text-slate-500">Condiciones de pago</label>
+                <input className="input" value={editItem.condiciones_pago ?? ""} onChange={(e) => setEditItem({ ...editItem, condiciones_pago: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setEditItem(null)}>Cancelar</button>
+              <button className="btn" onClick={guardarEditar}>Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
