@@ -95,9 +95,34 @@ app.put("/proveedores/:id", requireRole("admin", "jefe_farmacia_central"), async
 app.get("/areas", async (c) => {
   const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(
-    `SELECT id, nombre, tipo, bajo_llave FROM area WHERE institucion_id = ? ORDER BY nombre`
+    `SELECT id, nombre, tipo, bajo_llave, activo FROM area WHERE institucion_id = ? ORDER BY nombre`
   ).bind(instId).all();
   return c.json({ data: results });
+});
+
+app.put("/areas/:id", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre || !b?.tipo) return c.json({ error: "datos_invalidos" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE area SET nombre=?, tipo=?, bajo_llave=? WHERE id=? AND institucion_id=?`
+  ).bind(b.nombre, b.tipo, b.bajo_llave ? 1 : 0, id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/areas/:id/desactivar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE area SET activo=0 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/areas/:id/activar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE area SET activo=1 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
 });
 
 app.get("/lotes-producto", async (c) => {

@@ -176,6 +176,7 @@ function Laboratorios() {
 function Areas() {
   const [items, setItems] = useState<any[]>([]);
   const [form, setForm] = useState<any>({ nombre: "", tipo: "servicio", bajo_llave: false });
+  const [editItem, setEditItem] = useState<any | null>(null);
   const tipos = ["farmacia_central", "farmacia_periferica", "quirofano", "servicio", "consulta_externa", "emergencia", "almacen"];
   const load = () => api.get<{ data: any[] }>("/api/catalogos/areas").then((r) => setItems(r.data));
   useEffect(() => { load(); }, []);
@@ -183,6 +184,17 @@ function Areas() {
     if (!form.nombre) { alert("Nombre requerido"); return; }
     await api.post("/api/catalogos/areas", form);
     setForm({ nombre: "", tipo: "servicio", bajo_llave: false });
+    load();
+  };
+  const guardarEditar = async () => {
+    if (!editItem?.nombre) { alert("Nombre requerido"); return; }
+    await api.put(`/api/catalogos/areas/${editItem.id}`, editItem);
+    setEditItem(null);
+    load();
+  };
+  const toggleActivo = async (a: any) => {
+    const action = a.activo ? "desactivar" : "activar";
+    await api.post(`/api/catalogos/areas/${a.id}/${action}`, {});
     load();
   };
   return (
@@ -209,9 +221,45 @@ function Areas() {
         <button className="btn" onClick={submit}>+ Agregar area</button>
       </div>
       <table className="table">
-        <thead><tr><th>Nombre</th><th>Tipo</th><th>Bajo llave</th></tr></thead>
-        <tbody>{items.map((a) => <tr key={a.id}><td>{a.nombre}</td><td>{a.tipo}</td><td>{a.bajo_llave ? "Si" : ""}</td></tr>)}</tbody>
+        <thead><tr><th>Nombre</th><th>Tipo</th><th>Bajo llave</th><th>Estado</th><th></th></tr></thead>
+        <tbody>{items.map((a) => (
+          <tr key={a.id} className={!a.activo ? "opacity-50" : ""}>
+            <td>{a.nombre}</td><td>{a.tipo}</td><td>{a.bajo_llave ? "Si" : ""}</td>
+            <td><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${a.activo ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}>{a.activo ? "Activa" : "Inactiva"}</span></td>
+            <td className="flex gap-1">
+              <button className="btn-secondary text-xs" onClick={() => setEditItem({ ...a })}>Editar</button>
+              <button className={`text-xs px-2 py-1 rounded ${a.activo ? "bg-amber-100 text-amber-700 hover:bg-amber-200" : "bg-green-100 text-green-700 hover:bg-green-200"}`} onClick={() => toggleActivo(a)}>{a.activo ? "Desactivar" : "Activar"}</button>
+            </td>
+          </tr>
+        ))}</tbody>
       </table>
+
+      {editItem && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-md space-y-3">
+            <h2 className="font-semibold">Editar area</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs text-slate-500">Nombre *</label>
+                <input className="input" value={editItem.nombre} onChange={(e) => setEditItem({ ...editItem, nombre: e.target.value })} />
+              </div>
+              <div>
+                <label className="text-xs text-slate-500">Tipo</label>
+                <select className="input" value={editItem.tipo} onChange={(e) => setEditItem({ ...editItem, tipo: e.target.value })}>
+                  {tipos.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={!!editItem.bajo_llave} onChange={(e) => setEditItem({ ...editItem, bajo_llave: e.target.checked })} /> Bajo llave
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setEditItem(null)}>Cancelar</button>
+              <button className="btn" onClick={guardarEditar}>Guardar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
