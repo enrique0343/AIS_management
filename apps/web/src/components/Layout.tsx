@@ -18,6 +18,7 @@ const menu: MenuItem[] = [
   { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones", group: "clinico" },
   // Administracion
   { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"], badge: "alta", group: "admin" },
+  { to: "/honorarios", label: "Honorarios Medicos", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },

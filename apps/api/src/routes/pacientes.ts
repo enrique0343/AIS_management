@@ -292,6 +292,49 @@ app.post(
   }
 );
 
-// Pacientes "en atencion": episodio activo o habitacion activa.
-// Usado por la pagina /atencion (bedside).
+// === Pólizas de seguro ===
+app.get("/:id/polizas", async (c) => {
+  const instId = getInstId(c);
+  const pacId = parseInt(c.req.param("id"), 10);
+  const { results } = await c.env.DB.prepare(
+    `SELECT pp.id, pp.numero_poliza, pp.titular, pp.cobertura_pct, pp.fecha_vence, pp.activo,
+            a.id AS aseguradora_id, a.nombre AS aseguradora_nombre
+       FROM poliza_paciente pp
+       JOIN aseguradora a ON a.id = pp.aseguradora_id
+      WHERE pp.paciente_id = ? AND pp.institucion_id = ?
+      ORDER BY pp.activo DESC, pp.creado_en DESC`
+  ).bind(pacId, instId).all();
+  return c.json({ data: results });
+});
+
+app.post("/:id/polizas", requireRole("admin", "facturacion", "medico", "enfermeria"), async (c) => {
+  const instId = getInstId(c);
+  const pacId = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.aseguradora_id || !b?.numero_poliza) return c.json({ error: "datos_invalidos" }, 400);
+  const r = await c.env.DB.prepare(
+    `INSERT INTO poliza_paciente (paciente_id, aseguradora_id, numero_poliza, titular, cobertura_pct, fecha_vence, institucion_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(pacId, b.aseguradora_id, b.numero_poliza, b.titular ?? null, b.cobertura_pct ?? 100, b.fecha_vence ?? null, instId).run();
+  return c.json({ id: r.meta.last_row_id });
+});
+
+app.put("/polizas/:id", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.numero_poliza) return c.json({ error: "numero_poliza_requerido" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE poliza_paciente SET numero_poliza=?, titular=?, cobertura_pct=?, fecha_vence=? WHERE id=? AND institucion_id=?`
+  ).bind(b.numero_poliza, b.titular ?? null, b.cobertura_pct ?? 100, b.fecha_vence ?? null, id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/polizas/:id/desactivar", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE poliza_paciente SET activo=0 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
 export default app;

@@ -148,6 +148,51 @@ app.post("/areas", requireRole("admin"), async (c) => {
   return c.json({ id: r.meta.last_row_id });
 });
 
+app.get("/aseguradoras", async (c) => {
+  const instId = getInstId(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, nombre, nit, contacto, telefono, email, activo
+       FROM aseguradora WHERE institucion_id = ? ORDER BY nombre`
+  ).bind(instId).all();
+  return c.json({ data: results });
+});
+
+app.post("/aseguradoras", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  const r = await c.env.DB.prepare(
+    `INSERT INTO aseguradora (nombre, nit, contacto, telefono, email, institucion_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, instId).run();
+  return c.json({ id: r.meta.last_row_id });
+});
+
+app.put("/aseguradoras/:id", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE aseguradora SET nombre=?, nit=?, contacto=?, telefono=?, email=? WHERE id=? AND institucion_id=?`
+  ).bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/aseguradoras/:id/desactivar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE aseguradora SET activo=0 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/aseguradoras/:id/activar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE aseguradora SET activo=1 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
 app.get("/srs", async (c) => {
   const q = (c.req.query("q") ?? "").trim();
   const browse = c.req.query("browse") === "1";

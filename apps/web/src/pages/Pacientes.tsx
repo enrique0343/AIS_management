@@ -26,6 +26,9 @@ export default function Pacientes() {
   const [ocupaciones, setOcupaciones] = useState<any[]>([]);
   const [estado, setEstado] = useState<any | null>(null);
   const [habitaciones, setHabitaciones] = useState<any[]>([]);
+  const [polizas, setPolizas] = useState<any[]>([]);
+  const [aseguradoras, setAseguradoras] = useState<any[]>([]);
+  const [polizaForm, setPolizaForm] = useState<any | null>(null);
   const [form, setForm] = useState<any>({ nombres: "", apellidos: "", documento_tipo: "dui", documento_numero: "", sexo: "M" });
 
   const load = () => api.get<{ data: Pac[] }>(`/api/pacientes${q ? `?q=${encodeURIComponent(q)}` : ""}`).then((r) => setItems(r.data));
@@ -35,6 +38,21 @@ export default function Pacientes() {
     api.get<{ data: any[] }>(`/api/habitaciones/paciente/${id}`).then((rr) => setOcupaciones(rr.data));
     api.get<any>(`/api/pacientes/${id}/estado-cuenta`).then(setEstado);
     api.get<{ data: any[] }>(`/api/habitaciones`).then((rr) => setHabitaciones(rr.data));
+    api.get<{ data: any[] }>(`/api/pacientes/${id}/polizas`).then((rr) => setPolizas(rr.data));
+    api.get<{ data: any[] }>(`/api/catalogos/aseguradoras`).then((rr) => setAseguradoras(rr.data.filter((a: any) => a.activo)));
+  };
+
+  const agregarPoliza = async () => {
+    if (!detalle || !polizaForm?.aseguradora_id || !polizaForm?.numero_poliza) { alert("Aseguradora y numero de poliza requeridos"); return; }
+    await api.post(`/api/pacientes/${detalle.paciente.id}/polizas`, polizaForm);
+    setPolizaForm(null);
+    api.get<{ data: any[] }>(`/api/pacientes/${detalle.paciente.id}/polizas`).then((rr) => setPolizas(rr.data));
+  };
+
+  const desactivarPoliza = async (polizaId: number) => {
+    if (!detalle) return;
+    await api.post(`/api/pacientes/polizas/${polizaId}/desactivar`, {});
+    api.get<{ data: any[] }>(`/api/pacientes/${detalle.paciente.id}/polizas`).then((rr) => setPolizas(rr.data));
   };
 
   const asignarHab = async () => {
@@ -206,6 +224,60 @@ export default function Pacientes() {
                     </tr>
                   ))}
                 </tbody>
+              </table>
+            )}
+
+            <div className="flex justify-between items-center pt-2 border-t">
+              <h3 className="font-semibold">Seguros medicos</h3>
+              <button className="btn text-xs" onClick={() => setPolizaForm({ aseguradora_id: "", numero_poliza: "", titular: "", cobertura_pct: 100, fecha_vence: "" })}>+ Agregar poliza</button>
+            </div>
+            {polizaForm && (
+              <div className="grid grid-cols-2 gap-2 text-sm bg-blue-50 p-3 rounded-lg">
+                <div className="col-span-2">
+                  <label className="text-xs text-slate-500">Aseguradora *</label>
+                  <select className="input" value={polizaForm.aseguradora_id} onChange={(e) => setPolizaForm({ ...polizaForm, aseguradora_id: Number(e.target.value) })}>
+                    <option value="">-- Seleccionar --</option>
+                    {aseguradoras.map((a: any) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">No. Poliza *</label>
+                  <input className="input" value={polizaForm.numero_poliza} onChange={(e) => setPolizaForm({ ...polizaForm, numero_poliza: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Titular (si es beneficiario)</label>
+                  <input className="input" value={polizaForm.titular} onChange={(e) => setPolizaForm({ ...polizaForm, titular: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Cobertura %</label>
+                  <input className="input" type="number" min="1" max="100" value={polizaForm.cobertura_pct} onChange={(e) => setPolizaForm({ ...polizaForm, cobertura_pct: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-500">Fecha vence</label>
+                  <input className="input" type="date" value={polizaForm.fecha_vence} onChange={(e) => setPolizaForm({ ...polizaForm, fecha_vence: e.target.value })} />
+                </div>
+                <div className="col-span-2 flex justify-end gap-2">
+                  <button className="btn-secondary text-xs" onClick={() => setPolizaForm(null)}>Cancelar</button>
+                  <button className="btn text-xs" onClick={agregarPoliza}>Guardar poliza</button>
+                </div>
+              </div>
+            )}
+            {!polizas.length ? (
+              <div className="text-sm text-slate-500">Sin polizas registradas</div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>Aseguradora</th><th>Poliza</th><th>Titular</th><th>Cobertura</th><th>Vence</th><th>Estado</th><th></th></tr></thead>
+                <tbody>{polizas.map((p: any) => (
+                  <tr key={p.id} className={!p.activo ? "opacity-50" : ""}>
+                    <td>{p.aseguradora_nombre}</td>
+                    <td className="font-mono text-xs">{p.numero_poliza}</td>
+                    <td>{p.titular ?? "-"}</td>
+                    <td>{p.cobertura_pct}%</td>
+                    <td className="text-xs">{p.fecha_vence ?? "-"}</td>
+                    <td><span className={`text-xs px-1.5 rounded-full ${p.activo ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"}`}>{p.activo ? "Activa" : "Inactiva"}</span></td>
+                    <td>{p.activo && <button className="text-xs text-amber-600 hover:underline" onClick={() => desactivarPoliza(p.id)}>Desactivar</button>}</td>
+                  </tr>
+                ))}</tbody>
               </table>
             )}
 

@@ -561,6 +561,49 @@ app.post(
       ).bind(facturaId, globalDescLabel, -globalDescMonto, -globalDescMonto, instId).run();
     }
 
+    // Si viene poliza_id, dividir en factura paciente + factura aseguradora
+    let facturaSegId: number | null = null;
+    let numeroSeg: string | null = null;
+    const polizaId = body.poliza_id ? Number(body.poliza_id) : null;
+    if (polizaId) {
+      const poliza = await c.env.DB.prepare(
+        `SELECT pp.id, pp.cobertura_pct, pp.aseguradora_id FROM poliza_paciente pp
+          WHERE pp.id = ? AND pp.paciente_id = ? AND pp.activo = 1 AND pp.institucion_id = ?`
+      ).bind(polizaId, ep.paciente_id, instId).first<{ id: number; cobertura_pct: number; aseguradora_id: number }>();
+      if (poliza) {
+        const cobPct = poliza.cobertura_pct / 100;
+        const montoSeg = +(total * cobPct).toFixed(2);
+        const montoPac = +(total - montoSeg).toFixed(2);
+        if (montoSeg > 0) {
+          const subSeg = +(montoSeg / (1 + ivaPct / 100)).toFixed(2);
+          const ivaSeg = +(montoSeg - subSeg).toFixed(2);
+          numeroSeg = `F-SEG-${Date.now()}`;
+          const fs = await c.env.DB.prepare(
+            `INSERT INTO factura (numero, paciente_id, episodio_id, subtotal, iva, total, usuario_id, observaciones, tipo, aseguradora_id, poliza_id, estado_seguro, institucion_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'Cargo aseguradora - alta', 'aseguradora', ?, ?, 'pendiente', ?)`
+          ).bind(numeroSeg, ep.paciente_id, ep.id, subSeg, ivaSeg, montoSeg, c.get("session")!.usuario_id, poliza.aseguradora_id, polizaId, instId).run();
+          facturaSegId = fs.meta.last_row_id as number;
+          // Copiar detalles a la factura de seguro (proporcional)
+          await c.env.DB.prepare(
+            `INSERT INTO factura_detalle (factura_id, descripcion, cantidad, precio_unitario, subtotal, institucion_id)
+             SELECT ?, descripcion, cantidad, ROUND(precio_unitario * ?, 4), ROUND(subtotal * ?, 4), ?
+               FROM factura_detalle WHERE factura_id = ? AND institucion_id = ?`
+          ).bind(facturaSegId, cobPct, cobPct, instId, facturaId, instId).run();
+        }
+        if (montoPac > 0) {
+          // Actualizar factura del paciente con monto reducido y tipo='paciente'
+          const subPac = +(montoPac / (1 + ivaPct / 100)).toFixed(2);
+          const ivaPac = +(montoPac - subPac).toFixed(2);
+          await c.env.DB.prepare(
+            `UPDATE factura SET total=?, subtotal=?, iva=?, tipo='paciente', observaciones='Copago paciente - alta' WHERE id=? AND institucion_id=?`
+          ).bind(montoPac, subPac, ivaPac, facturaId, instId).run();
+        } else {
+          // 100% seguro: anular la factura del paciente
+          await c.env.DB.prepare(`UPDATE factura SET estado='anulada', tipo='paciente' WHERE id=? AND institucion_id=?`).bind(facturaId, instId).run();
+        }
+      }
+    }
+
     await c.env.DB.prepare(
       `UPDATE episodio_atencion SET estado='cerrado', fecha_fin=datetime('now') WHERE id = ? AND institucion_id = ?`
     )
@@ -572,12 +615,12 @@ app.post(
       accion: "cerrar_y_facturar",
       entidad: "episodio_atencion",
       entidad_id: ep.id,
-      payload: { factura_id: facturaId, total, descuentos: totalDescCat + globalDescMonto },
+      payload: { factura_id: facturaId, factura_seg_id: facturaSegId, total, descuentos: totalDescCat + globalDescMonto },
       ip: c.get("ip"),
       institucion_id: instId,
     });
 
-    return c.json({ ok: true, factura_id: facturaId, numero, subtotal: subtotalBase, iva, total });
+    return c.json({ ok: true, factura_id: facturaId, factura_seg_id: facturaSegId, numero, numero_seg: numeroSeg, subtotal: subtotalBase, iva, total });
   }
 );
 
@@ -735,6 +778,55 @@ app.get("/facturas/:id/para-print", async (c) => {
     `SELECT * FROM pago WHERE factura_id = ? AND institucion_id = ? ORDER BY fecha`
   ).bind(id, instId).all();
   return c.json({ factura: f, detalles: detalles, pagos: pagos.results });
+});
+
+// Cuentas por cobrar a aseguradoras
+app.get("/cuentas-aseguradoras", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const estadoSeg = c.req.query("estado_seguro") ?? "enviada";
+  const filt: string[] = ["f.institucion_id = ?", "f.tipo = 'aseguradora'"];
+  const binds: unknown[] = [instId];
+  if (estadoSeg !== "todas") { filt.push("COALESCE(f.estado_seguro,'pendiente') = ?"); binds.push(estadoSeg); }
+  const { results } = await c.env.DB.prepare(
+    `SELECT f.id, f.numero, f.fecha, f.total, f.estado, f.estado_seguro,
+            f.fecha_envio_seguro, f.referencia_cobro_seguro,
+            p.nombres || ' ' || p.apellidos AS paciente, p.expediente,
+            a.nombre AS aseguradora
+       FROM factura f
+       JOIN paciente p ON p.id = f.paciente_id
+       LEFT JOIN aseguradora a ON a.id = f.aseguradora_id
+      WHERE ${filt.join(" AND ")}
+      ORDER BY f.fecha DESC LIMIT 300`
+  ).bind(...binds).all();
+  return c.json({ data: results });
+});
+
+app.post("/facturas/:id/enviar-seguro", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(
+    `UPDATE factura SET estado_seguro='enviada', fecha_envio_seguro=datetime('now') WHERE id=? AND institucion_id=? AND tipo='aseguradora'`
+  ).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/facturas/:id/cobrar-seguro", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => ({}));
+  await c.env.DB.prepare(
+    `UPDATE factura SET estado_seguro='cobrada', estado='pagada', referencia_cobro_seguro=? WHERE id=? AND institucion_id=? AND tipo='aseguradora'`
+  ).bind(b.referencia ?? null, id, instId).run();
+  await logAudit(c.env, {
+    usuario_id: c.get("session")!.usuario_id,
+    accion: "cobrar_seguro",
+    entidad: "factura",
+    entidad_id: id,
+    payload: { referencia: b.referencia },
+    ip: c.get("ip"),
+    institucion_id: instId,
+  });
+  return c.json({ ok: true });
 });
 
 // Reporte de ingresos

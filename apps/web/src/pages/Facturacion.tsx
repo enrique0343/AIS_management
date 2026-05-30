@@ -37,6 +37,7 @@ type CierreModal = {
   resumen: ResumenCuenta | null; resumenLoading: boolean;
   descGlobal: DescInput;
   descPorCat: Record<string, DescInput>;
+  polizas: any[]; polizaId: number | null;
 };
 
 const calcDescMonto = (base: number, d: DescInput): number => {
@@ -46,7 +47,11 @@ const calcDescMonto = (base: number, d: DescInput): number => {
 };
 
 export default function Facturacion() {
-  const [tab, setTab] = useState<"cola" | "facturas" | "reporte">("cola");
+  const [tab, setTab] = useState<"cola" | "facturas" | "seguros" | "reporte">("cola");
+  const [cuentasSeg, setCuentasSeg] = useState<any[]>([]);
+  const [filtroSeg, setFiltroSeg] = useState<"pendiente" | "enviada" | "cobrada" | "todas">("enviada");
+  const [cobrarSegModal, setCobrarSegModal] = useState<{ id: number; numero: string; total: number } | null>(null);
+  const [refCobroSeg, setRefCobroSeg] = useState("");
   const [altaPend, setAltaPend] = useState<AltaPend[]>([]);
   const [items, setItems] = useState<Factura[]>([]);
   const [detalle, setDetalle] = useState<{ factura: Factura; detalles: Detalle[]; pagos: Pago[] } | null>(null);
@@ -77,11 +82,15 @@ export default function Facturacion() {
     const modal: CierreModal = {
       ep, ivaPct: 13, cargosExtra: [], resumen: null, resumenLoading: true,
       descGlobal: { tipo: "pct", valor: "" }, descPorCat: {},
+      polizas: [], polizaId: null,
     };
     setCierreModal(modal);
     try {
-      const r = await api.get<ResumenCuenta>(`/api/facturacion/episodios/${ep.episodio_id}/resumen-cuenta`);
-      setCierreModal((prev) => prev ? { ...prev, resumen: r, resumenLoading: false } : null);
+      const [r, rp] = await Promise.all([
+        api.get<ResumenCuenta>(`/api/facturacion/episodios/${ep.episodio_id}/resumen-cuenta`),
+        api.get<{ data: any[] }>(`/api/pacientes/${ep.paciente_id}/polizas`).catch(() => ({ data: [] })),
+      ]);
+      setCierreModal((prev) => prev ? { ...prev, resumen: r, resumenLoading: false, polizas: rp.data.filter((p: any) => p.activo) } : null);
     } catch {
       setCierreModal((prev) => prev ? { ...prev, resumenLoading: false } : null);
     }
@@ -106,6 +115,7 @@ export default function Facturacion() {
           })),
           descuento_global,
           descuentos_categoria: descuentos_categoria.length ? descuentos_categoria : undefined,
+          poliza_id: cierreModal.polizaId ?? undefined,
         }
       );
       setCierreModal(null);
@@ -224,11 +234,14 @@ export default function Facturacion() {
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Facturacion</h1>
 
-      <div className="flex gap-1 border-b">
-        {(["cola", "facturas", "reporte"] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)}
+      <div className="flex gap-1 border-b flex-wrap">
+        {(["cola", "facturas", "seguros", "reporte"] as const).map((t) => (
+          <button key={t} onClick={() => {
+            setTab(t);
+            if (t === "seguros") api.get<{ data: any[] }>(`/api/facturacion/cuentas-aseguradoras?estado_seguro=${filtroSeg}`).then((r) => setCuentasSeg(r.data)).catch(() => {});
+          }}
             className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t ? "border-blue-600 text-blue-600" : "border-transparent text-slate-500 hover:text-slate-700"}`}>
-            {t === "cola" ? "Cola de alta" : t === "facturas" ? "Facturas emitidas" : "Reporte de ingresos"}
+            {t === "cola" ? "Cola de alta" : t === "facturas" ? "Facturas emitidas" : t === "seguros" ? "Cuentas Seguro" : "Reporte de ingresos"}
             {t === "cola" && altaPend.length > 0 && (
               <span className="ml-2 bg-amber-500 text-white text-xs px-1.5 rounded-full">{altaPend.length}</span>
             )}
@@ -352,6 +365,65 @@ export default function Facturacion() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {tab === "seguros" && (
+        <div className="card space-y-3">
+          <div className="flex gap-2 items-end flex-wrap">
+            <div>
+              <label className="text-xs">Estado</label>
+              <select className="input text-sm" value={filtroSeg} onChange={(e) => setFiltroSeg(e.target.value as any)}>
+                <option value="pendiente">Pendiente envio</option>
+                <option value="enviada">Enviadas al seguro</option>
+                <option value="cobrada">Cobradas</option>
+                <option value="todas">Todas</option>
+              </select>
+            </div>
+            <button className="btn-secondary" onClick={() =>
+              api.get<{ data: any[] }>(`/api/facturacion/cuentas-aseguradoras?estado_seguro=${filtroSeg}`)
+                .then((r) => setCuentasSeg(r.data)).catch(() => {})
+            }>Buscar</button>
+          </div>
+          {!cuentasSeg.length ? (
+            <div className="text-sm text-slate-500">Sin resultados para el filtro seleccionado.</div>
+          ) : (
+            <table className="table">
+              <thead><tr><th>Numero</th><th>Fecha</th><th>Paciente</th><th>Aseguradora</th><th>Total</th><th>Estado seguro</th><th></th></tr></thead>
+              <tbody>
+                {cuentasSeg.map((f) => (
+                  <tr key={f.id}>
+                    <td>{f.numero}</td>
+                    <td className="text-xs">{f.fecha}</td>
+                    <td>{f.paciente}</td>
+                    <td>{f.aseguradora ?? "-"}</td>
+                    <td>${Number(f.total).toFixed(2)}</td>
+                    <td>
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        f.estado_seguro === "cobrada" ? "bg-green-100 text-green-700" :
+                        f.estado_seguro === "enviada" ? "bg-blue-100 text-blue-700" :
+                        "bg-amber-100 text-amber-700"
+                      }`}>{f.estado_seguro ?? "pendiente"}</span>
+                    </td>
+                    <td className="flex gap-1">
+                      {(!f.estado_seguro || f.estado_seguro === "pendiente") && (
+                        <button className="btn-secondary text-xs" onClick={() =>
+                          api.post(`/api/facturacion/facturas/${f.id}/enviar-seguro`, {})
+                            .then(() => api.get<{ data: any[] }>(`/api/facturacion/cuentas-aseguradoras?estado_seguro=${filtroSeg}`).then((r) => setCuentasSeg(r.data)))
+                            .catch((e: any) => alert(e.message))
+                        }>Marcar enviada</button>
+                      )}
+                      {f.estado_seguro === "enviada" && (
+                        <button className="btn text-xs" onClick={() => { setCobrarSegModal({ id: f.id, numero: f.numero, total: f.total }); setRefCobroSeg(""); }}>
+                          Registrar cobro
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 
@@ -521,6 +593,38 @@ export default function Facturacion() {
                 </div>
               </div>
 
+              {/* Seguro médico */}
+              {m.polizas.length > 0 && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-2">
+                  <div className="text-xs font-semibold text-blue-800">Seguro medico</div>
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <select className="input flex-1 text-sm"
+                      value={m.polizaId ?? ""}
+                      onChange={(e) => setCierreModal({ ...m, polizaId: e.target.value ? Number(e.target.value) : null })}>
+                      <option value="">Sin seguro (cobrar al paciente)</option>
+                      {m.polizas.map((p: any) => (
+                        <option key={p.id} value={p.id}>
+                          {p.aseguradora_nombre} — Poliza {p.numero_poliza} ({p.cobertura_pct}% cobertura)
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {m.polizaId && (() => {
+                    const pol = m.polizas.find((p: any) => p.id === m.polizaId);
+                    if (!pol) return null;
+                    const cobPct = pol.cobertura_pct / 100;
+                    const montoSeg = +(totales.total * cobPct).toFixed(2);
+                    const montoPac = +(totales.total - montoSeg).toFixed(2);
+                    return (
+                      <div className="text-xs text-blue-700 grid grid-cols-2 gap-1">
+                        <span>Cargo aseguradora ({pol.cobertura_pct}%):</span><span className="font-semibold">${montoSeg.toFixed(2)}</span>
+                        <span>Copago paciente:</span><span className="font-semibold">${montoPac.toFixed(2)}</span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
               <div className="border-t pt-3 flex justify-between items-center gap-3">
                 <p className="text-xs text-amber-700">Se egresara la habitacion, se generara la factura y se cerrara el episodio.</p>
                 <button className="btn shrink-0" onClick={confirmarCierre}>Confirmar y facturar</button>
@@ -589,6 +693,30 @@ export default function Facturacion() {
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setEditLoteModal(null)}>Cancelar</button>
               <button className="btn" disabled={!editLoteModal.loteId || editLoteModal.justificacion.trim().length < 15 || !Number(editLoteModal.cantidad) || Number(editLoteModal.cantidad) <= 0} onClick={confirmarEditarLote}>Guardar ajuste</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal cobro de seguro */}
+      {cobrarSegModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-sm space-y-3">
+            <h2 className="font-semibold">Registrar cobro de aseguradora</h2>
+            <div className="text-sm text-slate-600">Factura <strong>{cobrarSegModal.numero}</strong> — ${Number(cobrarSegModal.total).toFixed(2)}</div>
+            <div>
+              <label className="text-xs font-medium">No. de referencia / comprobante</label>
+              <input className="input" placeholder="Ej. TRF-20250601-ABC" value={refCobroSeg} onChange={(e) => setRefCobroSeg(e.target.value)} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setCobrarSegModal(null)}>Cancelar</button>
+              <button className="btn" onClick={async () => {
+                try {
+                  await api.post(`/api/facturacion/facturas/${cobrarSegModal.id}/cobrar-seguro`, { referencia: refCobroSeg || null });
+                  setCobrarSegModal(null);
+                  api.get<{ data: any[] }>(`/api/facturacion/cuentas-aseguradoras?estado_seguro=${filtroSeg}`).then((r) => setCuentasSeg(r.data));
+                } catch (e: any) { alert(e.message); }
+              }}>Confirmar cobro</button>
             </div>
           </div>
         </div>
