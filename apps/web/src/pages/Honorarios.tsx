@@ -68,7 +68,7 @@ export default function Honorarios() {
 
   const eliminar = async (id: number) => {
     if (!confirm("Eliminar honorario?")) return;
-    await api.delete(`/api/honorarios/${id}`);
+    await api.del(`/api/honorarios/${id}`);
     loadItems();
   };
 
