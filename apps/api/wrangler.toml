@@ -34,3 +34,8 @@ id = "a207f2115d374319bbbefe3378ef2dc1"
 [[r2_buckets]]
 binding = "DOCS"
 bucket_name = "ais-docs"
+
+[triggers]
+crons = ["0 7 * * *", "0 */4 * * *"]
+# 07:00 UTC diario  → cierre + alertas de lotes/seguros/honorarios
+# cada 4 horas      → alertas de stock bajo

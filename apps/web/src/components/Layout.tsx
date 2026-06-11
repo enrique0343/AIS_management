@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth, hasRole } from "../lib/auth";
 import { api } from "../lib/api";
+import NotificacionesBell from "./NotificacionesBell";
 
 type MenuItem = {
   to: string; label: string; roles: string[];
@@ -131,10 +132,13 @@ export default function Layout() {
         </nav>
 
         <div className="mt-auto p-4 border-t border-slate-700 text-xs">
-          <div className="mb-2">
-            <div className="font-medium">{user?.nombre}</div>
-            <div className="text-slate-400">{user?.email}</div>
-            <div className="text-slate-400 mt-1">{user?.roles.join(", ")}</div>
+          <div className="flex items-start justify-between mb-2">
+            <div>
+              <div className="font-medium">{user?.nombre}</div>
+              <div className="text-slate-400">{user?.email}</div>
+              <div className="text-slate-400 mt-1">{user?.roles.join(", ")}</div>
+            </div>
+            <NotificacionesBell />
           </div>
           <button onClick={logout} className="btn-danger w-full text-xs">
             Cerrar sesion
@@ -166,6 +170,7 @@ export default function Layout() {
               {altaPend} alta
             </NavLink>
           )}
+          <NotificacionesBell />
         </header>
 
         <main className="flex-1 p-4 md:p-6 overflow-auto">

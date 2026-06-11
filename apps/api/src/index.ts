@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Bindings, AppVariables } from "./env";
 import { sessionMiddleware } from "./middleware/auth";
+import { runDailyCierre, runFrequentAlerts } from "./lib/alertas";
 
 import auth from "./routes/auth";
 import catalogos from "./routes/catalogos";
@@ -18,6 +19,7 @@ import gastos from "./routes/gastos";
 import reportes from "./routes/reportes";
 import requisiciones from "./routes/requisiciones";
 import honorarios from "./routes/honorarios";
+import notificaciones from "./routes/notificaciones";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
@@ -92,6 +94,7 @@ app.route("/api/gastos", gastos);
 app.route("/api/reportes", reportes);
 app.route("/api/requisiciones", requisiciones);
 app.route("/api/honorarios", honorarios);
+app.route("/api/notificaciones", notificaciones);
 
 app.onError((err, c) => {
   console.error(err);
@@ -104,4 +107,13 @@ app.all("/api/*", (c) => c.json({ error: "not_found", path: c.req.path }, 404));
 // Cualquier otra ruta -> servir SPA (Workers Assets con SPA fallback).
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      event.cron === "0 7 * * *"
+        ? runDailyCierre(env)
+        : runFrequentAlerts(env)
+    );
+  },
+};

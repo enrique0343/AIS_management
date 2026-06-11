@@ -5,6 +5,7 @@ export type Bindings = {
   ASSETS: Fetcher;
   APP_ENV: string;
   SESSION_TTL_SECONDS: string;
+  RESEND_API_KEY?: string;
 };
 
 export type SessionData = {
