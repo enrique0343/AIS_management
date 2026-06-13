@@ -20,6 +20,9 @@ import reportes from "./routes/reportes";
 import requisiciones from "./routes/requisiciones";
 import honorarios from "./routes/honorarios";
 import notificaciones from "./routes/notificaciones";
+import expediente from "./routes/expediente";
+import citas from "./routes/citas";
+import finanzas from "./routes/finanzas";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
@@ -95,6 +98,9 @@ app.route("/api/reportes", reportes);
 app.route("/api/requisiciones", requisiciones);
 app.route("/api/honorarios", honorarios);
 app.route("/api/notificaciones", notificaciones);
+app.route("/api/expediente", expediente);
+app.route("/api/citas", citas);
+app.route("/api/finanzas", finanzas);
 
 app.onError((err, c) => {
   console.error(err);

@@ -14,12 +14,15 @@ const menu: MenuItem[] = [
   // Clinico
   { to: "/pacientes", label: "Pacientes", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"], group: "clinico" },
   { to: "/atencion", label: "Atencion / Hospitalizacion", roles: ["admin", "enfermeria", "medico", "facturacion"], group: "clinico" },
+  { to: "/expediente", label: "Expediente Clinico", roles: ["admin", "medico", "enfermeria"], group: "clinico" },
+  { to: "/citas", label: "Citas Medicas", roles: ["admin", "medico", "enfermeria", "facturacion", "programador_quirofano"], group: "clinico" },
   { to: "/enfermeria", label: "Enfermeria", roles: ["admin", "enfermeria", "medico", "farmaceutico"], group: "clinico" },
   { to: "/quirofano", label: "Quirofano", roles: ["admin", "programador_quirofano", "medico", "enfermeria"], group: "clinico" },
   { to: "/farmacia", label: "Farmacia", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], badge: "requisiciones", group: "clinico" },
   // Administracion
   { to: "/facturacion", label: "Facturacion", roles: ["admin", "facturacion"], badge: "alta", group: "admin" },
   { to: "/honorarios", label: "Honorarios Medicos", roles: ["admin", "facturacion"], group: "admin" },
+  { to: "/finanzas", label: "Finanzas", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/gastos", label: "Gastos", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/reportes", label: "Reportes", roles: ["admin", "facturacion"], group: "admin" },
   { to: "/inventario", label: "Inventario", roles: ["admin", "jefe_farmacia_central", "farmaceutico", "responsable_stock"], group: "admin" },
