@@ -1,6 +1,7 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../lib/auth";
+import { api } from "../lib/api";
 
 export default function LoginPage() {
   const { login, user } = useAuth();
@@ -9,6 +10,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [instNombre, setInstNombre] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<{ nombre: string }>("/api/auth/info")
+      .then((r) => setInstNombre(r.nombre))
+      .catch(() => {});
+  }, []);
 
   if (user) {
     nav("/", { replace: true });
@@ -32,7 +40,11 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-100">
       <form onSubmit={onSubmit} className="card w-full max-w-sm space-y-4">
         <h1 className="text-xl font-semibold">AIS Management</h1>
-        <p className="text-sm text-slate-500">Inicie sesion para continuar</p>
+        {instNombre && (
+          <p className="text-sm text-slate-500">
+            Acceso para <span className="font-medium text-slate-700">{instNombre}</span>
+          </p>
+        )}
         <div>
           <label className="text-sm font-medium">Email</label>
           <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
@@ -51,9 +63,6 @@ export default function LoginPage() {
         <button type="submit" className="btn w-full" disabled={loading}>
           {loading ? "Validando..." : "Ingresar"}
         </button>
-        <p className="text-xs text-slate-400">
-          Primera vez? Use <code>POST /api/auth/bootstrap</code> para crear el admin inicial.
-        </p>
       </form>
     </div>
   );

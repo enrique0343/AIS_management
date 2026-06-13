@@ -9,6 +9,7 @@ export const RoleCode = z.enum([
   "enfermeria",
   "facturacion",
   "programador_quirofano",
+  "super_admin",
 ]);
 export type RoleCode = z.infer<typeof RoleCode>;
 
@@ -37,6 +38,7 @@ export type MovimientoTipo = z.infer<typeof MovimientoTipo>;
 export const LoginInput = z.object({
   email: z.string().email(),
   password: z.string().min(6),
+  slug: z.string().optional(),  // institución; si no se envía, el server lo deriva del Host header
 });
 export type LoginInput = z.infer<typeof LoginInput>;
 
@@ -46,8 +48,11 @@ export const ProductoInput = z.object({
   principio_activo: z.string().optional().nullable(),
   categoria_id: z.number().int().positive(),
   unidad_medida_id: z.number().int().positive(),
+  unidad_compra_id: z.number().int().positive().optional().nullable(),
+  factor_conversion: z.number().positive().default(1),
   laboratorio_id: z.number().int().positive().optional().nullable(),
   registro_sanitario: z.string().optional().nullable(),
+  pvmp_srs: z.number().positive().optional().nullable(),
   es_controlado: z.boolean().default(false),
   requiere_receta_especial: z.boolean().default(false),
   condiciones_almacenamiento: z.string().optional().nullable(),

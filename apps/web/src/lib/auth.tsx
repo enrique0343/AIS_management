@@ -18,6 +18,15 @@ type AuthCtx = {
 
 const Ctx = createContext<AuthCtx | null>(null);
 
+function resolveSlug(): string | undefined {
+  const host = window.location.hostname;
+  if (host.includes("localhost") || host.includes("workers.dev")) return undefined;
+  const parts = host.split(".");
+  // psi.ais.worke.net → 4 partes → slug "psi"
+  // ais.worke.net     → 3 partes → principal (undefined)
+  return parts.length >= 4 ? parts[0].toLowerCase() : undefined;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<Usuario | null>(null);
   const [loading, setLoading] = useState(true);
@@ -36,7 +45,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = async (email: string, password: string) => {
-    const r = await api.post<{ usuario: Usuario }>("/api/auth/login", { email, password });
+    const slug = resolveSlug();
+    const r = await api.post<{ usuario: Usuario }>("/api/auth/login", { email, password, slug });
     setUser(r.usuario);
   };
 

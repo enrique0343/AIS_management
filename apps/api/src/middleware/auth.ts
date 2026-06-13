@@ -1,4 +1,4 @@
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import type { Bindings, AppVariables } from "../env";
 import { getSidFromCookie, readSession } from "../lib/auth";
 
@@ -32,8 +32,13 @@ export function requireRole(...roles: string[]): MiddlewareHandler<{
   return async (c, next) => {
     const session = c.get("session");
     if (!session) return c.json({ error: "no_autenticado" }, 401);
-    const ok = session.roles.some((r) => roles.includes(r) || r === "admin");
+    const ok = session.roles.some((r) => roles.includes(r) || r === "admin" || r === "super_admin");
     if (!ok) return c.json({ error: "sin_permiso", requeridos: roles }, 403);
     await next();
   };
+}
+
+/** Extrae el institucion_id de la sesión (requiere requireAuth previo). */
+export function getInstId(c: Context<{ Bindings: Bindings; Variables: AppVariables }>): number {
+  return c.get("session")!.institucion_id;
 }

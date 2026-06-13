@@ -5,6 +5,7 @@ export type Bindings = {
   ASSETS: Fetcher;
   APP_ENV: string;
   SESSION_TTL_SECONDS: string;
+  RESEND_API_KEY?: string;
 };
 
 export type SessionData = {
@@ -13,6 +14,8 @@ export type SessionData = {
   nombre: string;
   roles: string[];
   created_at: number;
+  institucion_id: number;
+  institucion_slug: string;
 };
 
 export type AppVariables = {

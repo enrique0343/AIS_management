@@ -35,6 +35,20 @@ type Habitacion = {
 
 type Pac = { id: number; expediente: string; nombres: string; apellidos: string; documento_numero: string | null };
 
+type DevLinea = {
+  consumoId: number;
+  productoId: number;
+  producto: string;
+  loteOriginalId: number | null;
+  numeroLoteOriginal: string | null;
+  fechaVencOriginal: string | null;
+  maxCant: number;
+  seleccionado: boolean;
+  cantidad: number;
+  loteSeleccionadoId: string;
+  lotes: { id: number; numero_lote: string; fecha_vencimiento: string }[];
+};
+
 type CargoTipo = "servicios" | "laboratorio" | "imagenes" | "medicamentos";
 
 const cargoConfig: Record<CargoTipo, { label: string; prefijos: string; color: string; descripcion: string; tipo: "cargo" | "requisicion" }> = {
@@ -54,6 +68,10 @@ export default function Atencion() {
   const [productos, setProductos] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
   const [cargoForm, setCargoForm] = useState<any>({ producto_id: "", area_id: "", cantidad: 1, observaciones: "", prioridad: "normal" });
+  const [reqLineas, setReqLineas] = useState<{ producto_id: string; cantidad: number }[]>([{ producto_id: "", cantidad: 1 }]);
+
+  // Modal de devolucion multi-producto
+  const [devModal, setDevModal] = useState<{ lineas: DevLinea[]; areaId: string; obs: string } | null>(null);
 
   // Hospitalizar modal
   const [showHosp, setShowHosp] = useState(false);
@@ -95,19 +113,24 @@ export default function Atencion() {
     const r = await api.get<{ data: any[] }>(`/api/productos?categoria_prefijo=${cargoConfig[tipo].prefijos}`);
     setProductos(r.data);
     setCargoForm({ producto_id: "", area_id: "", cantidad: 1, observaciones: "", prioridad: "normal" });
+    setReqLineas([{ producto_id: "", cantidad: 1 }]);
   };
 
   const submitCargo = async () => {
-    if (!sel || !cargo || !cargoForm.producto_id) { alert("Producto requerido"); return; }
+    if (!sel || !cargo) return;
     try {
       if (cargoConfig[cargo].tipo === "requisicion") {
+        const detalles = reqLineas
+          .filter((l) => l.producto_id && Number(l.cantidad) > 0)
+          .map((l) => ({ producto_id: Number(l.producto_id), cantidad_solicitada: Number(l.cantidad) }));
+        if (!detalles.length) { alert("Agrega al menos un producto con cantidad."); return; }
         await api.post("/api/requisiciones", {
           paciente_id: sel.id,
           episodio_id: sel.episodio_id,
           area_solicitante_id: cargoForm.area_id ? Number(cargoForm.area_id) : null,
           prioridad: cargoForm.prioridad ?? "normal",
           observaciones: cargoForm.observaciones || null,
-          detalles: [{ producto_id: Number(cargoForm.producto_id), cantidad_solicitada: Number(cargoForm.cantidad) }],
+          detalles,
         });
         alert("Requisicion enviada a farmacia interna.");
       } else {
@@ -125,18 +148,81 @@ export default function Atencion() {
     } catch (e: any) { alert(e.message); }
   };
 
-  // === Devolucion ===
-  const devolver = async (consumoId: number, maxCant: number, producto: string) => {
-    const cantStr = prompt(`Devolver ${producto}\nCantidad a devolver (max ${maxCant}):`, String(maxCant));
-    if (!cantStr) return;
-    const areaIdStr = prompt("Area de farmacia interna donde reingresa el stock:\n" + areas.map((a) => `${a.id}: ${a.nombre}`).join("\n"));
-    if (!areaIdStr) return;
-    try {
-      await api.post(`/api/enfermeria/consumos/${consumoId}/devolucion`, {
-        cantidad: Number(cantStr), area_destino_id: Number(areaIdStr), observaciones: "Devolucion - no utilizado",
-      });
-      refrescar();
-    } catch (e: any) { alert(e.message); }
+  // === Devolucion multi-producto ===
+  const areasDevolucion = useMemo(
+    () => areas.filter((a) => ["farmacia_central", "farmacia_periferica"].includes(a.tipo)),
+    [areas]
+  );
+
+  const abrirDevolucion = async () => {
+    if (!estado) return;
+    const returnables = (estado.consumos as any[]).filter(
+      (c) => !c.facturado && !c.es_servicio && c.cantidad > 0
+    );
+    if (!returnables.length) { alert("No hay consumos de productos disponibles para devolver."); return; }
+
+    const pids = [...new Set(returnables.map((c: any) => c.producto_id as number))];
+    const lotesMap: Record<number, { id: number; numero_lote: string; fecha_vencimiento: string }[]> = {};
+    await Promise.all(
+      pids.map(async (pid) => {
+        try {
+          const r = await api.get<{ data: any[] }>(`/api/catalogos/lotes-producto?producto_id=${pid}`);
+          lotesMap[pid] = r.data;
+        } catch {
+          lotesMap[pid] = [];
+        }
+      })
+    );
+
+    const lineas: DevLinea[] = returnables.map((c: any) => ({
+      consumoId: c.id,
+      productoId: c.producto_id,
+      producto: c.producto,
+      loteOriginalId: c.lote_id ?? null,
+      numeroLoteOriginal: c.numero_lote ?? null,
+      fechaVencOriginal: c.fecha_vencimiento ?? null,
+      maxCant: c.cantidad,
+      seleccionado: false,
+      cantidad: c.cantidad,
+      loteSeleccionadoId: c.lote_id ? String(c.lote_id) : "",
+      lotes: lotesMap[c.producto_id] ?? [],
+    }));
+
+    setDevModal({
+      lineas,
+      areaId: areasDevolucion.length === 1 ? String(areasDevolucion[0].id) : "",
+      obs: "",
+    });
+  };
+
+  const updateDevLinea = (i: number, patch: Partial<DevLinea>) => {
+    if (!devModal) return;
+    const lineas = [...devModal.lineas];
+    lineas[i] = { ...lineas[i], ...patch };
+    setDevModal({ ...devModal, lineas });
+  };
+
+  const submitDevolucion = async () => {
+    if (!devModal || !devModal.areaId) { alert("Selecciona la farmacia destino"); return; }
+    const sel2 = devModal.lineas.filter((l) => l.seleccionado && Number(l.cantidad) > 0);
+    if (!sel2.length) { alert("Selecciona al menos un producto"); return; }
+    let ok = 0;
+    let err = 0;
+    for (const linea of sel2) {
+      try {
+        await api.post(`/api/enfermeria/consumos/${linea.consumoId}/solicitar-devolucion`, {
+          cantidad: Number(linea.cantidad),
+          area_destino_id: Number(devModal.areaId),
+          ...(linea.loteSeleccionadoId ? { lote_id: Number(linea.loteSeleccionadoId) } : {}),
+          observaciones: devModal.obs || `Devolucion de ${linea.producto} - no utilizado`,
+        });
+        ok++;
+      } catch { err++; }
+    }
+    if (err) alert(`${ok} enviada(s), ${err} con error.`);
+    else alert(`${ok} solicitud(es) enviada(s) a farmacia.`);
+    setDevModal(null);
+    refrescar();
   };
 
   // === Hospitalizar ===
@@ -168,18 +254,6 @@ export default function Atencion() {
     } catch (e: any) { alert(e.message); }
   };
 
-  // === Egresar habitacion ===
-  const egresarHabitacion = async () => {
-    if (!sel?.ocupacion_id) return;
-    if (!confirm("Egresar de la habitacion? Quedara facturable.")) return;
-    await api.post(`/api/habitaciones/ocupacion/${sel.ocupacion_id}/egresar`, {});
-    refrescar();
-    // Recargar el paciente seleccionado
-    const r = await api.get<{ data: EnAtencion[] }>("/api/pacientes/_en-atencion");
-    const refreshed = r.data.find((p) => p.episodio_id === sel.episodio_id);
-    if (refreshed) setSel(refreshed);
-  };
-
   // === Alta / cierre ===
   const solicitarAlta = async () => {
     if (!sel) return;
@@ -187,29 +261,15 @@ export default function Atencion() {
     try {
       await api.post(`/api/pacientes/episodios/${sel.episodio_id}/solicitar-alta`, {});
       refrescar();
-    } catch (e: any) { alert(e.message); }
+    } catch (e: any) {
+      alert(e.message ?? "Error al solicitar alta");
+    }
   };
 
   const cancelarAlta = async () => {
     if (!sel) return;
     await api.post(`/api/pacientes/episodios/${sel.episodio_id}/cancelar-alta`, {});
     refrescar();
-  };
-
-  const cerrarYFacturar = async () => {
-    if (!sel) return;
-    if (!confirm(`Cerrar cuenta de ${sel.nombres} ${sel.apellidos}?\nSe egresara la habitacion, se generara la factura interna y se cerrara el episodio.`)) return;
-    try {
-      const ivaStr = prompt("IVA % (0 si no aplica):", "13");
-      if (ivaStr === null) return;
-      const r = await api.post<any>(`/api/facturacion/episodios/${sel.episodio_id}/cerrar-y-facturar`, {
-        iva_pct: Number(ivaStr || 0), permitir_cero: true,
-      });
-      alert(`Cuenta cerrada. Factura ${r.numero} por $${Number(r.total).toFixed(2)}`);
-      setSel(null);
-      setEstado(null);
-      loadList();
-    } catch (e: any) { alert(e.message); }
   };
 
   return (
@@ -292,9 +352,6 @@ export default function Atencion() {
               </div>
               <div className="flex flex-col gap-2 items-end">
                 <button className="btn-secondary" onClick={() => { setSel(null); setEstado(null); }}>Volver</button>
-                {sel.habitacion && hasRole(user, "enfermeria", "medico", "facturacion") && (
-                  <button className="btn-danger text-xs" onClick={egresarHabitacion}>Egresar habitacion</button>
-                )}
               </div>
             </div>
           </div>
@@ -318,13 +375,25 @@ export default function Atencion() {
           {estado && (
             <div className="card">
               <h3 className="font-semibold mb-2">Cuenta hospitalaria</h3>
+              {(() => {
+                const totalPF = Number(estado.totales.consumos_pendientes) + Number(estado.totales.habitacion_en_curso) + Number(estado.totales.habitacion_pendiente);
+                return (
+                  <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 mb-3 flex justify-between items-center">
+                    <div>
+                      <div className="text-xs text-indigo-600 font-medium uppercase tracking-wide">Total por facturar (proyectado)</div>
+                      <div className="text-xs text-slate-500 mt-0.5">Consumos + habitacion en curso + habitacion cerrada sin facturar</div>
+                    </div>
+                    <div className="text-2xl font-bold text-indigo-700">${totalPF.toFixed(2)}</div>
+                  </div>
+                );
+              })()}
               <div className="grid grid-cols-3 gap-2 mb-3">
-                <div className="card !p-2"><div className="text-xs text-slate-500">Consumos pendientes</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.consumos_pendientes).toFixed(2)}</div></div>
+                <div className="card !p-2"><div className="text-xs text-slate-500">Consumos pend.</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.consumos_pendientes).toFixed(2)}</div></div>
                 <div className="card !p-2"><div className="text-xs text-slate-500">Habitacion en curso</div><div className="text-lg font-semibold text-blue-600">${Number(estado.totales.habitacion_en_curso).toFixed(2)}</div></div>
                 <div className="card !p-2"><div className="text-xs text-slate-500">Habitacion facturable</div><div className="text-lg font-semibold text-amber-600">${Number(estado.totales.habitacion_pendiente).toFixed(2)}</div></div>
               </div>
               <table className="table">
-                <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripcion</th><th>Cant</th><th>Precio</th><th>Subtotal</th><th>Fact</th><th></th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Tipo</th><th>Descripcion</th><th>Cant</th><th>Precio</th><th>Subtotal</th><th>Fact</th></tr></thead>
                 <tbody>
                   {estado.ocupaciones.map((o: any) => (
                     <tr key={`o${o.id}`} className={!o.fecha_egreso ? "bg-blue-50/40" : ""}>
@@ -335,7 +404,6 @@ export default function Atencion() {
                       <td>{Number(o.precio_diario_snapshot).toFixed(2)}</td>
                       <td>${Number(o.subtotal).toFixed(2)}</td>
                       <td>{o.facturado ? "Si" : "No"}</td>
-                      <td></td>
                     </tr>
                   ))}
                   {estado.consumos.map((c: any) => (
@@ -347,16 +415,18 @@ export default function Atencion() {
                       <td>{Number(c.precio_venta_snapshot).toFixed(2)}</td>
                       <td>${Number(c.subtotal).toFixed(2)}</td>
                       <td>{c.facturado ? "Si" : "No"}</td>
-                      <td>
-                        {!c.facturado && !c.es_servicio && c.cantidad > 0 && (
-                          <button className="btn-secondary text-xs" onClick={() => devolver(c.id, c.cantidad, c.producto)}>Devolver</button>
-                        )}
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              <p className="text-xs text-slate-500">"Devolver" reingresa el producto no utilizado al stock de farmacia interna preservando el lote. Solo aplica a productos no facturados.</p>
+              {!sel.alta_solicitada_en && estado.consumos.some((c: any) => !c.facturado && !c.es_servicio && c.cantidad > 0) && (
+                <div className="flex justify-end mt-2">
+                  <button className="btn-secondary text-xs" onClick={abrirDevolucion}>
+                    Solicitar devolucion de productos
+                  </button>
+                </div>
+              )}
+              <p className="text-xs text-slate-500 mt-1">La devolucion crea una solicitud en farmacia. El dependiente confirma el lote y el area antes de ajustar el inventario.</p>
             </div>
           )}
 
@@ -366,9 +436,6 @@ export default function Atencion() {
             )}
             {sel.alta_solicitada_en && hasRole(user, "enfermeria", "medico") && (
               <button className="btn-secondary" onClick={cancelarAlta}>Cancelar alta</button>
-            )}
-            {hasRole(user, "facturacion") && (
-              <button className="btn-danger" onClick={cerrarYFacturar}>Cerrar cuenta y facturar</button>
             )}
           </div>
         </div>
@@ -465,68 +532,239 @@ export default function Atencion() {
             </div>
             <p className="text-xs text-slate-500">{cargoConfig[cargo].descripcion}</p>
 
-            <div>
-              <label className="text-xs font-medium">Producto</label>
-              <select className="input" value={cargoForm.producto_id} onChange={(e) => setCargoForm({ ...cargoForm, producto_id: e.target.value })}>
-                <option value="">-- Seleccionar --</option>
-                {productos.map((p) => (
-                  <option key={p.id} value={p.id}>{p.codigo} - {p.nombre} (${Number(p.precio_venta).toFixed(2)})</option>
-                ))}
-              </select>
-            </div>
-
-            {cargoConfig[cargo].tipo === "cargo" && (
-              <div>
-                <label className="text-xs font-medium">Area donde se presta el servicio</label>
-                <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
-                  <option value="">-- Seleccionar --</option>
-                  {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
-                </select>
-              </div>
-            )}
-
-            {cargoConfig[cargo].tipo === "requisicion" && (
+            {cargoConfig[cargo].tipo === "cargo" ? (
               <>
                 <div>
-                  <label className="text-xs font-medium">Area solicitante (opcional)</label>
+                  <label className="text-xs font-medium">Producto</label>
+                  <select className="input" value={cargoForm.producto_id} onChange={(e) => setCargoForm({ ...cargoForm, producto_id: e.target.value })}>
+                    <option value="">-- Seleccionar --</option>
+                    {productos.map((p) => (
+                      <option key={p.id} value={p.id}>{p.codigo} - {p.nombre} (${Number(p.precio_venta).toFixed(2)})</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium">Area donde se presta el servicio</label>
                   <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
-                    <option value="">-- No especificada --</option>
+                    <option value="">-- Seleccionar --</option>
                     {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-medium">Prioridad</label>
-                  <select className="input" value={cargoForm.prioridad ?? "normal"} onChange={(e) => setCargoForm({ ...cargoForm, prioridad: e.target.value })}>
-                    <option value="normal">Normal</option>
-                    <option value="urgente">Urgente</option>
-                    <option value="stat">STAT (inmediato)</option>
-                  </select>
+                  <label className="text-xs font-medium">Cantidad</label>
+                  <input className="input" type="number" step="0.01" value={cargoForm.cantidad} onChange={(e) => setCargoForm({ ...cargoForm, cantidad: e.target.value })} />
                 </div>
+                <div>
+                  <label className="text-xs font-medium">Observaciones</label>
+                  <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
+                </div>
+                <p className="text-xs text-slate-500">Servicio: se registra como cargo directo al paciente. No descuenta stock.</p>
               </>
-            )}
-
-            <div>
-              <label className="text-xs font-medium">Cantidad</label>
-              <input className="input" type="number" step="0.01" value={cargoForm.cantidad} onChange={(e) => setCargoForm({ ...cargoForm, cantidad: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-xs font-medium">Observaciones</label>
-              <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
-            </div>
-
-            {cargoConfig[cargo].tipo === "requisicion" ? (
-              <p className="text-xs text-amber-700">
-                Esta solicitud llegara a la bandeja de farmacia interna. Farmacia validara el lote y despachara.
-                El cargo al paciente se registra automaticamente al despachar.
-              </p>
             ) : (
-              <p className="text-xs text-slate-500">Servicio: se registra como cargo directo al paciente. No descuenta stock.</p>
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium">Area solicitante (opcional)</label>
+                    <select className="input" value={cargoForm.area_id} onChange={(e) => setCargoForm({ ...cargoForm, area_id: e.target.value })}>
+                      <option value="">-- No especificada --</option>
+                      {areas.map((a) => <option key={a.id} value={a.id}>{a.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium">Prioridad</label>
+                    <select className="input" value={cargoForm.prioridad ?? "normal"} onChange={(e) => setCargoForm({ ...cargoForm, prioridad: e.target.value })}>
+                      <option value="normal">Normal</option>
+                      <option value="urgente">Urgente</option>
+                      <option value="stat">STAT (inmediato)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-medium">Productos solicitados</label>
+                    <button
+                      className="text-xs text-emerald-700 font-medium hover:underline"
+                      onClick={() => setReqLineas([...reqLineas, { producto_id: "", cantidad: 1 }])}
+                    >
+                      + Agregar producto
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    {reqLineas.map((linea, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <select
+                          className="input flex-1"
+                          value={linea.producto_id}
+                          onChange={(e) => {
+                            const copia = [...reqLineas];
+                            copia[idx] = { ...copia[idx], producto_id: e.target.value };
+                            setReqLineas(copia);
+                          }}
+                        >
+                          <option value="">-- Seleccionar --</option>
+                          {productos.map((p) => (
+                            <option key={p.id} value={p.id}>{p.codigo} - {p.nombre}</option>
+                          ))}
+                        </select>
+                        <input
+                          className="input w-20 text-center"
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={linea.cantidad}
+                          onChange={(e) => {
+                            const copia = [...reqLineas];
+                            copia[idx] = { ...copia[idx], cantidad: Number(e.target.value) };
+                            setReqLineas(copia);
+                          }}
+                        />
+                        {reqLineas.length > 1 && (
+                          <button
+                            className="text-red-500 hover:text-red-700 text-lg leading-none px-1"
+                            onClick={() => setReqLineas(reqLineas.filter((_, i) => i !== idx))}
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium">Observaciones</label>
+                  <input className="input" value={cargoForm.observaciones} onChange={(e) => setCargoForm({ ...cargoForm, observaciones: e.target.value })} />
+                </div>
+                <p className="text-xs text-amber-700">
+                  Esta solicitud llegara a la bandeja de farmacia interna. Farmacia validara el lote y despachara.
+                  El cargo al paciente se registra automaticamente al despachar.
+                </p>
+              </>
             )}
 
             <div className="flex justify-end gap-2">
               <button className="btn-secondary" onClick={() => setCargo(null)}>Cancelar</button>
               <button className="btn" onClick={submitCargo}>
                 {cargoConfig[cargo].tipo === "requisicion" ? "Enviar a farmacia" : "Registrar cargo"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de devolucion multi-producto */}
+      {devModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="card w-full max-w-xl space-y-4 max-h-[90vh] overflow-auto">
+            <div className="flex justify-between items-center">
+              <h2 className="font-semibold">Solicitar devolucion a farmacia</h2>
+              <button className="btn-secondary text-xs" onClick={() => setDevModal(null)}>Cancelar</button>
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Farmacia que recibe *</label>
+              <select
+                className="input"
+                value={devModal.areaId}
+                onChange={(e) => setDevModal({ ...devModal, areaId: e.target.value })}
+              >
+                <option value="">-- Seleccionar farmacia --</option>
+                {areasDevolucion.map((a) => (
+                  <option key={a.id} value={a.id}>{a.nombre}</option>
+                ))}
+              </select>
+              {!areasDevolucion.length && (
+                <p className="text-xs text-red-600 mt-1">No hay areas de farmacia configuradas.</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-600">
+                Selecciona los productos a devolver y confirma o corrige el lote:
+              </p>
+              {devModal.lineas.map((linea, i) => (
+                <div
+                  key={i}
+                  className={`border rounded-lg p-3 transition-colors ${
+                    linea.seleccionado ? "border-blue-400 bg-blue-50/30" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 shrink-0"
+                      checked={linea.seleccionado}
+                      onChange={(e) => updateDevLinea(i, { seleccionado: e.target.checked })}
+                    />
+                    <span className="font-medium text-sm">{linea.producto}</span>
+                  </label>
+
+                  {!linea.seleccionado && (
+                    <div className="text-xs text-slate-400 mt-1 ml-5">
+                      Cant: {linea.maxCant}
+                      {linea.numeroLoteOriginal && ` · Lote: ${linea.numeroLoteOriginal}`}
+                      {linea.fechaVencOriginal && ` · Vence: ${linea.fechaVencOriginal}`}
+                    </div>
+                  )}
+
+                  {linea.seleccionado && (
+                    <div className="mt-2 ml-5 grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-xs text-slate-500">Cantidad (max {linea.maxCant})</label>
+                        <input
+                          className="input text-sm"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          max={linea.maxCant}
+                          value={linea.cantidad}
+                          onChange={(e) => updateDevLinea(i, { cantidad: Number(e.target.value) })}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs text-slate-500">Lote a devolver</label>
+                        <select
+                          className="input text-sm"
+                          value={linea.loteSeleccionadoId}
+                          onChange={(e) => updateDevLinea(i, { loteSeleccionadoId: e.target.value })}
+                        >
+                          <option value="">Sin lote</option>
+                          {linea.lotes.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.numero_lote} — {l.fecha_vencimiento}
+                              {l.id === linea.loteOriginalId ? " ★" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {linea.loteOriginalId && (
+                          <p className="text-xs text-slate-400 mt-0.5">★ lote original del despacho</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div>
+              <label className="text-xs font-medium">Observaciones (opcional)</label>
+              <input
+                className="input"
+                placeholder="ej. Medicamentos no administrados"
+                value={devModal.obs}
+                onChange={(e) => setDevModal({ ...devModal, obs: e.target.value })}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button className="btn-secondary" onClick={() => setDevModal(null)}>Cancelar</button>
+              <button
+                className="btn"
+                onClick={submitDevolucion}
+                disabled={!devModal.areaId || !devModal.lineas.some((l) => l.seleccionado)}
+              >
+                Enviar solicitud a farmacia
               </button>
             </div>
           </div>

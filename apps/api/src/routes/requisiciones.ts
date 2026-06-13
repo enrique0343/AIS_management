@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Bindings, AppVariables } from "../env";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole, getInstId } from "../middleware/auth";
 import { planFEFO } from "../lib/fefo";
 import { logAudit } from "../lib/audit";
 
@@ -9,10 +9,11 @@ app.use("*", requireAuth);
 
 // Listar (filtrable por estado, paciente)
 app.get("/", async (c) => {
+  const instId = getInstId(c);
   const estado = c.req.query("estado");
   const pacienteId = c.req.query("paciente_id");
-  const filt: string[] = ["1=1"];
-  const binds: unknown[] = [];
+  const filt: string[] = ["r.institucion_id = ?"];
+  const binds: unknown[] = [instId];
   if (estado) { filt.push("r.estado = ?"); binds.push(estado); }
   if (pacienteId) { filt.push("r.paciente_id = ?"); binds.push(parseInt(pacienteId, 10)); }
   const { results } = await c.env.DB.prepare(
@@ -24,31 +25,39 @@ app.get("/", async (c) => {
             (SELECT COUNT(*) FROM requisicion_detalle d WHERE d.requisicion_id = r.id) AS lineas
        FROM requisicion r
        JOIN paciente p ON p.id = r.paciente_id
-       LEFT JOIN area ao ON ao.id = r.area_solicitante_id
-       JOIN area af ON af.id = r.area_farmacia_id
-       JOIN usuario us ON us.id = r.solicitante_id
-       LEFT JOIN usuario ud ON ud.id = r.despachador_id
+       LEFT JOIN area ao ON ao.id = r.area_solicitante_id AND ao.institucion_id = ?
+       JOIN area af ON af.id = r.area_farmacia_id AND af.institucion_id = ?
+       JOIN usuario us ON us.id = r.solicitante_id AND us.institucion_id = ?
+       LEFT JOIN usuario ud ON ud.id = r.despachador_id AND ud.institucion_id = ?
       WHERE ${filt.join(" AND ")}
       ORDER BY (r.estado = 'pendiente') DESC,
                CASE r.prioridad WHEN 'stat' THEN 0 WHEN 'urgente' THEN 1 ELSE 2 END,
                r.fecha_solicitud DESC
       LIMIT 500`
   )
-    .bind(...binds)
+    .bind(instId, instId, instId, instId, ...binds)
     .all();
   return c.json({ data: results });
 });
 
 // Conteo de pendientes para badge en menu
 app.get("/_pendientes_count", async (c) => {
-  const r = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM requisicion WHERE estado IN ('pendiente','despachada_parcial')`
-  ).first<{ n: number }>();
-  return c.json({ n: r?.n ?? 0 });
+  const instId = getInstId(c);
+  const rows = await c.env.DB.prepare(
+    `SELECT estado, COUNT(*) AS n FROM requisicion WHERE estado IN ('pendiente','despachada_parcial') AND institucion_id = ? GROUP BY estado`
+  ).bind(instId).all<{ estado: string; n: number }>();
+  const byEstado: Record<string, number> = {};
+  for (const row of rows.results) byEstado[row.estado] = row.n;
+  return c.json({
+    n: (byEstado["pendiente"] ?? 0) + (byEstado["despachada_parcial"] ?? 0),
+    pendiente: byEstado["pendiente"] ?? 0,
+    despachada_parcial: byEstado["despachada_parcial"] ?? 0,
+  });
 });
 
 // Detalle
 app.get("/:id", async (c) => {
+  const instId = getInstId(c);
   const id = parseInt(c.req.param("id"), 10);
   const r = await c.env.DB.prepare(
     `SELECT r.*, p.expediente, p.nombres || ' ' || p.apellidos AS paciente,
@@ -56,25 +65,25 @@ app.get("/:id", async (c) => {
             us.nombre AS solicitante, ud.nombre AS despachador
        FROM requisicion r
        JOIN paciente p ON p.id = r.paciente_id
-       LEFT JOIN area ao ON ao.id = r.area_solicitante_id
-       JOIN area af ON af.id = r.area_farmacia_id
-       JOIN usuario us ON us.id = r.solicitante_id
-       LEFT JOIN usuario ud ON ud.id = r.despachador_id
-      WHERE r.id = ?`
+       LEFT JOIN area ao ON ao.id = r.area_solicitante_id AND ao.institucion_id = ?
+       JOIN area af ON af.id = r.area_farmacia_id AND af.institucion_id = ?
+       JOIN usuario us ON us.id = r.solicitante_id AND us.institucion_id = ?
+       LEFT JOIN usuario ud ON ud.id = r.despachador_id AND ud.institucion_id = ?
+      WHERE r.id = ? AND r.institucion_id = ?`
   )
-    .bind(id)
+    .bind(instId, instId, instId, instId, id, instId)
     .first();
   if (!r) return c.json({ error: "no_encontrada" }, 404);
   const det = await c.env.DB.prepare(
     `SELECT d.id, d.producto_id, d.cantidad_solicitada, d.cantidad_despachada,
             p.codigo, p.nombre AS producto, u.abreviatura AS unidad,
-            (SELECT COALESCE(SUM(cantidad), 0) FROM existencia e WHERE e.producto_id = p.id) AS stock_total
+            (SELECT COALESCE(SUM(cantidad), 0) FROM existencia e WHERE e.producto_id = p.id AND e.institucion_id = ?) AS stock_total
        FROM requisicion_detalle d
-       JOIN producto p ON p.id = d.producto_id
+       JOIN producto p ON p.id = d.producto_id AND p.institucion_id = ?
        JOIN unidad_medida u ON u.id = p.unidad_medida_id
       WHERE d.requisicion_id = ?`
   )
-    .bind(id)
+    .bind(instId, instId, id)
     .all();
   return c.json({ requisicion: r, detalles: det.results });
 });
@@ -84,6 +93,7 @@ app.post(
   "/",
   requireRole("admin", "enfermeria", "medico", "farmaceutico"),
   async (c) => {
+    const instId = getInstId(c);
     const b = await c.req.json().catch(() => null);
     if (!b?.paciente_id || !Array.isArray(b.detalles) || !b.detalles.length) {
       return c.json({ error: "datos_invalidos" }, 400);
@@ -93,8 +103,8 @@ app.post(
     let farmaciaId = b.area_farmacia_id;
     if (!farmaciaId) {
       const f = await c.env.DB.prepare(
-        `SELECT id FROM area WHERE tipo = 'farmacia_central' ORDER BY id LIMIT 1`
-      ).first<{ id: number }>();
+        `SELECT id FROM area WHERE tipo = 'farmacia_central' AND institucion_id = ? ORDER BY id LIMIT 1`
+      ).bind(instId).first<{ id: number }>();
       if (!f) return c.json({ error: "no_hay_farmacia_central_configurada" }, 400);
       farmaciaId = f.id;
     }
@@ -102,9 +112,9 @@ app.post(
     // Validar que ningun producto sea servicio (no se solicitan)
     for (const d of b.detalles) {
       const cat = await c.env.DB.prepare(
-        `SELECT c.es_servicio FROM producto p JOIN categoria_producto c ON c.id = p.categoria_id WHERE p.id = ?`
+        `SELECT c.es_servicio FROM producto p JOIN categoria_producto c ON c.id = p.categoria_id WHERE p.id = ? AND p.institucion_id = ?`
       )
-        .bind(d.producto_id)
+        .bind(d.producto_id, instId)
         .first<{ es_servicio: number }>();
       if (!cat) return c.json({ error: "producto_no_encontrado", producto_id: d.producto_id }, 400);
       if (cat.es_servicio === 1) {
@@ -116,8 +126,8 @@ app.post(
     const ins = await c.env.DB.prepare(
       `INSERT INTO requisicion
          (numero, paciente_id, episodio_id, area_solicitante_id, area_farmacia_id,
-          prioridad, solicitante_id, observaciones)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          prioridad, solicitante_id, observaciones, institucion_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         numero,
@@ -127,7 +137,8 @@ app.post(
         farmaciaId,
         b.prioridad ?? "normal",
         c.get("session")!.usuario_id,
-        b.observaciones ?? null
+        b.observaciones ?? null,
+        instId
       )
       .run();
     const reqId = ins.meta.last_row_id as number;
@@ -135,10 +146,10 @@ app.post(
     for (const d of b.detalles) {
       await c.env.DB.prepare(
         `INSERT INTO requisicion_detalle
-           (requisicion_id, producto_id, cantidad_solicitada, observaciones)
-         VALUES (?, ?, ?, ?)`
+           (requisicion_id, producto_id, cantidad_solicitada, observaciones, institucion_id)
+         VALUES (?, ?, ?, ?, ?)`
       )
-        .bind(reqId, d.producto_id, Number(d.cantidad_solicitada), d.observaciones ?? null)
+        .bind(reqId, d.producto_id, Number(d.cantidad_solicitada), d.observaciones ?? null, instId)
         .run();
     }
 
@@ -149,6 +160,7 @@ app.post(
       entidad_id: reqId,
       payload: { numero, lineas: b.detalles.length, paciente_id: b.paciente_id },
       ip: c.get("ip"),
+      institucion_id: instId,
     });
 
     return c.json({ id: reqId, numero });
@@ -169,6 +181,7 @@ app.post(
   "/:id/despachar",
   requireRole("admin", "jefe_farmacia_central", "farmaceutico"),
   async (c) => {
+    const instId = getInstId(c);
     const id = parseInt(c.req.param("id"), 10);
     const b = await c.req.json().catch(() => ({}));
     const itemsByDetalle: Record<number, { lotes?: { lote_id: number | null; cantidad: number }[]; cantidad_despachada?: number }> = {};
@@ -178,9 +191,9 @@ app.post(
 
     const req = await c.env.DB.prepare(
       `SELECT r.*, p.id AS paciente_id_real
-         FROM requisicion r JOIN paciente p ON p.id = r.paciente_id WHERE r.id = ?`
+         FROM requisicion r JOIN paciente p ON p.id = r.paciente_id WHERE r.id = ? AND r.institucion_id = ?`
     )
-      .bind(id)
+      .bind(id, instId)
       .first<any>();
     if (!req) return c.json({ error: "no_encontrada" }, 404);
     if (!["pendiente", "despachada_parcial"].includes(req.estado)) {
@@ -191,30 +204,30 @@ app.post(
     let episodioId: number | null = req.episodio_id;
     if (!episodioId) {
       const ep = await c.env.DB.prepare(
-        `SELECT id FROM episodio_atencion WHERE paciente_id = ? AND estado = 'activo' ORDER BY id DESC LIMIT 1`
+        `SELECT id FROM episodio_atencion WHERE paciente_id = ? AND estado = 'activo' AND institucion_id = ? ORDER BY id DESC LIMIT 1`
       )
-        .bind(req.paciente_id)
+        .bind(req.paciente_id, instId)
         .first<{ id: number }>();
       if (ep) episodioId = ep.id;
       else {
         const ins = await c.env.DB.prepare(
-          `INSERT INTO episodio_atencion (paciente_id, motivo) VALUES (?, 'Atencion')`
+          `INSERT INTO episodio_atencion (paciente_id, motivo, institucion_id) VALUES (?, 'Atencion', ?)`
         )
-          .bind(req.paciente_id)
+          .bind(req.paciente_id, instId)
           .run();
         episodioId = ins.meta.last_row_id as number;
       }
-      await c.env.DB.prepare(`UPDATE requisicion SET episodio_id = ? WHERE id = ?`)
-        .bind(episodioId, id)
+      await c.env.DB.prepare(`UPDATE requisicion SET episodio_id = ? WHERE id = ? AND institucion_id = ?`)
+        .bind(episodioId, id, instId)
         .run();
     }
 
     const detalles = await c.env.DB.prepare(
       `SELECT d.*, p.costo_promedio_ponderado AS cpp, p.precio_venta
-         FROM requisicion_detalle d JOIN producto p ON p.id = d.producto_id
-        WHERE d.requisicion_id = ?`
+         FROM requisicion_detalle d JOIN producto p ON p.id = d.producto_id AND p.institucion_id = ?
+        WHERE d.requisicion_id = ? AND d.institucion_id = ?`
     )
-      .bind(id)
+      .bind(instId, id, instId)
       .all<any>();
 
     const resultados: any[] = [];
@@ -225,34 +238,34 @@ app.post(
       // Validar que el lote tenga stock en el area_farmacia
       const ex = await c.env.DB.prepare(
         `SELECT cantidad FROM existencia
-          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0) AND institucion_id = ?`
       )
-        .bind(productoId, req.area_farmacia_id, loteId)
+        .bind(productoId, req.area_farmacia_id, loteId, instId)
         .first<{ cantidad: number }>();
       if (!ex || ex.cantidad < cantidad) {
         throw new Error(`Stock insuficiente en lote seleccionado (disponible ${ex?.cantidad ?? 0})`);
       }
       await c.env.DB.prepare(
         `UPDATE existencia SET cantidad = cantidad - ?
-          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0)`
+          WHERE producto_id = ? AND area_id = ? AND COALESCE(lote_id, 0) = COALESCE(?, 0) AND institucion_id = ?`
       )
-        .bind(cantidad, productoId, req.area_farmacia_id, loteId)
+        .bind(cantidad, productoId, req.area_farmacia_id, loteId, instId)
         .run();
       await c.env.DB.prepare(
         `INSERT INTO movimiento_inventario
            (tipo, producto_id, lote_id, area_origen_id, cantidad, costo_unitario,
-            usuario_id, referencia_tipo, referencia_id, observaciones)
-         VALUES ('consumo_paciente', ?, ?, ?, ?, ?, ?, 'requisicion', ?, ?)`
+            usuario_id, referencia_tipo, referencia_id, observaciones, institucion_id)
+         VALUES ('consumo_paciente', ?, ?, ?, ?, ?, ?, 'requisicion', ?, ?, ?)`
       )
-        .bind(productoId, loteId, req.area_farmacia_id, cantidad, cpp, c.get("session")!.usuario_id, id, refTexto)
+        .bind(productoId, loteId, req.area_farmacia_id, cantidad, cpp, c.get("session")!.usuario_id, id, refTexto, instId)
         .run();
       await c.env.DB.prepare(
         `INSERT INTO consumo_paciente
            (episodio_id, producto_id, lote_id, area_id, cantidad,
-            costo_unitario_snapshot, precio_venta_snapshot, usuario_id, observaciones)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            costo_unitario_snapshot, precio_venta_snapshot, usuario_id, observaciones, institucion_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-        .bind(episodioId, productoId, loteId, req.area_farmacia_id, cantidad, cpp, precioVenta, c.get("session")!.usuario_id, refTexto)
+        .bind(episodioId, productoId, loteId, req.area_farmacia_id, cantidad, cpp, precioVenta, c.get("session")!.usuario_id, refTexto, instId)
         .run();
     };
 
@@ -279,7 +292,7 @@ app.post(
             ? Math.min(Number(item.cantidad_despachada), pendiente)
             : pendiente;
           if (aDespachar <= 0) continue;
-          const plan = await planFEFO(c.env, d.producto_id, req.area_farmacia_id, aDespachar);
+          const plan = await planFEFO(c.env, d.producto_id, req.area_farmacia_id, aDespachar, instId);
           for (const step of plan) {
             await ejecutarStep(d.producto_id, step.lote_id, step.tomar, d.cpp, d.precio_venta, `Despacho req. ${req.numero}`);
             totalDespachado += step.tomar;
@@ -288,9 +301,9 @@ app.post(
 
         if (totalDespachado > 0) {
           await c.env.DB.prepare(
-            `UPDATE requisicion_detalle SET cantidad_despachada = cantidad_despachada + ? WHERE id = ?`
+            `UPDATE requisicion_detalle SET cantidad_despachada = cantidad_despachada + ? WHERE id = ? AND institucion_id = ?`
           )
-            .bind(totalDespachado, d.id)
+            .bind(totalDespachado, d.id, instId)
             .run();
           const completo = totalDespachado >= pendiente;
           if (completo) huboCompleto = true; else huboParcial = true;
@@ -305,9 +318,9 @@ app.post(
     // Determinar estado final segun cantidades
     const finales = await c.env.DB.prepare(
       `SELECT SUM(cantidad_solicitada - cantidad_despachada) AS pend
-         FROM requisicion_detalle WHERE requisicion_id = ?`
+         FROM requisicion_detalle WHERE requisicion_id = ? AND institucion_id = ?`
     )
-      .bind(id)
+      .bind(id, instId)
       .first<{ pend: number }>();
     const totalPend = Number(finales?.pend ?? 0);
     const nuevoEstado = totalPend <= 0 ? "despachada" : huboCompleto || huboParcial ? "despachada_parcial" : req.estado;
@@ -315,9 +328,9 @@ app.post(
     await c.env.DB.prepare(
       `UPDATE requisicion
           SET estado = ?, despachador_id = ?, fecha_despacho = COALESCE(fecha_despacho, datetime('now'))
-        WHERE id = ?`
+        WHERE id = ? AND institucion_id = ?`
     )
-      .bind(nuevoEstado, c.get("session")!.usuario_id, id)
+      .bind(nuevoEstado, c.get("session")!.usuario_id, id, instId)
       .run();
 
     await logAudit(c.env, {
@@ -327,6 +340,7 @@ app.post(
       entidad_id: id,
       payload: { resultados, estado: nuevoEstado },
       ip: c.get("ip"),
+      institucion_id: instId,
     });
 
     return c.json({ ok: true, estado: nuevoEstado, resultados });
@@ -338,16 +352,17 @@ app.post(
   "/:id/rechazar",
   requireRole("admin", "jefe_farmacia_central", "farmaceutico"),
   async (c) => {
+    const instId = getInstId(c);
     const id = parseInt(c.req.param("id"), 10);
     const b = await c.req.json().catch(() => null);
     if (!b?.motivo) return c.json({ error: "motivo_requerido" }, 400);
-    const r = await c.env.DB.prepare(`SELECT estado FROM requisicion WHERE id = ?`).bind(id).first<{ estado: string }>();
+    const r = await c.env.DB.prepare(`SELECT estado FROM requisicion WHERE id = ? AND institucion_id = ?`).bind(id, instId).first<{ estado: string }>();
     if (!r) return c.json({ error: "no_encontrada" }, 404);
     if (r.estado !== "pendiente") return c.json({ error: "solo_pendientes" }, 400);
     await c.env.DB.prepare(
-      `UPDATE requisicion SET estado='rechazada', motivo_rechazo=?, despachador_id=?, fecha_despacho=datetime('now') WHERE id=?`
+      `UPDATE requisicion SET estado='rechazada', motivo_rechazo=?, despachador_id=?, fecha_despacho=datetime('now') WHERE id=? AND institucion_id=?`
     )
-      .bind(b.motivo, c.get("session")!.usuario_id, id)
+      .bind(b.motivo, c.get("session")!.usuario_id, id, instId)
       .run();
     return c.json({ ok: true });
   }
@@ -358,11 +373,12 @@ app.post(
   "/:id/cancelar",
   requireRole("admin", "enfermeria", "medico", "farmaceutico"),
   async (c) => {
+    const instId = getInstId(c);
     const id = parseInt(c.req.param("id"), 10);
-    const r = await c.env.DB.prepare(`SELECT estado FROM requisicion WHERE id = ?`).bind(id).first<{ estado: string }>();
+    const r = await c.env.DB.prepare(`SELECT estado FROM requisicion WHERE id = ? AND institucion_id = ?`).bind(id, instId).first<{ estado: string }>();
     if (!r) return c.json({ error: "no_encontrada" }, 404);
     if (r.estado !== "pendiente") return c.json({ error: "solo_pendientes" }, 400);
-    await c.env.DB.prepare(`UPDATE requisicion SET estado='cancelada' WHERE id=?`).bind(id).run();
+    await c.env.DB.prepare(`UPDATE requisicion SET estado='cancelada' WHERE id=? AND institucion_id=?`).bind(id, instId).run();
     return c.json({ ok: true });
   }
 );

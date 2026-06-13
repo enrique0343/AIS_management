@@ -22,6 +22,7 @@ type Stats = {
   monto_pendiente: number;
   ingresos_hoy: number;
   episodios_por_facturar: number;
+  total_por_facturar: number;
 };
 
 export default function Dashboard() {
@@ -49,11 +50,11 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Panel</h1>
+    <div className="space-y-4 md:space-y-6">
+      <h1 className="text-xl md:text-2xl font-semibold">Panel</h1>
 
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 md:gap-4">
           <Stat label="Productos activos" value={stats.productos} />
           <Stat label="Pacientes" value={stats.pacientes} />
           <Stat label="Episodios activos" value={stats.episodios_activos} accent="text-blue-600" />
@@ -63,10 +64,13 @@ export default function Dashboard() {
           <Stat label="Ingresos hoy" value={`$${Number(stats.ingresos_hoy).toFixed(2)}`} accent="text-green-600" />
           <Stat label="Por facturar" value={stats.episodios_por_facturar} accent={stats.episodios_por_facturar ? "text-amber-600" : ""} />
           <Stat label="Reorden" value={reorden.length} accent={reorden.length ? "text-red-600" : ""} />
+          <Stat label="Total por facturar *" value={`$${Number(stats.total_por_facturar).toFixed(2)}`} accent="text-indigo-600" />
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <p className="text-xs text-slate-400">* Total por facturar: consumos pendientes + días de habitación (en curso y cerradas) de todos los episodios activos, sin incluir lo ya facturado. Dato proyectado para administración.</p>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
         <section className="card">
           <div className="flex items-center justify-between mb-2">
             <h2 className="font-semibold">Productos bajo reorden ({reorden.length})</h2>

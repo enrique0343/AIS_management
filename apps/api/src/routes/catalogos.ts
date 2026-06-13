@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Bindings, AppVariables } from "../env";
-import { requireAuth, requireRole } from "../middleware/auth";
+import { requireAuth, requireRole, getInstId } from "../middleware/auth";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
@@ -14,81 +14,227 @@ app.get("/unidades-medida", async (c) => {
 });
 
 app.get("/categorias", async (c) => {
+  const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(
     `SELECT id, nombre, prefijo, requiere_lote_vencimiento, es_servicio
-       FROM categoria_producto ORDER BY nombre`
-  ).all();
+       FROM categoria_producto WHERE institucion_id = ? ORDER BY nombre`
+  ).bind(instId).all();
   return c.json({ data: results });
 });
 
 app.post("/categorias", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
   const body = await c.req.json().catch(() => null);
   if (!body?.nombre || !body?.prefijo) return c.json({ error: "nombre_y_prefijo_requeridos" }, 400);
   const prefijo = String(body.prefijo).toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (prefijo.length < 2 || prefijo.length > 5) return c.json({ error: "prefijo_invalido_2_a_5_alfanumerico" }, 400);
   const r = await c.env.DB.prepare(
-    `INSERT INTO categoria_producto (nombre, prefijo, requiere_lote_vencimiento, es_servicio)
-     VALUES (?, ?, ?, ?)`
+    `INSERT INTO categoria_producto (nombre, prefijo, requiere_lote_vencimiento, es_servicio, institucion_id)
+     VALUES (?, ?, ?, ?, ?)`
   )
-    .bind(body.nombre, prefijo, body.requiere_lote_vencimiento ? 1 : 0, body.es_servicio ? 1 : 0)
+    .bind(body.nombre, prefijo, body.requiere_lote_vencimiento ? 1 : 0, body.es_servicio ? 1 : 0, instId)
     .run();
   return c.json({ id: r.meta.last_row_id });
 });
 
 app.get("/laboratorios", async (c) => {
+  const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(
-    `SELECT id, nombre, pais FROM laboratorio_fabricante ORDER BY nombre`
-  ).all();
+    `SELECT id, nombre, pais FROM laboratorio_fabricante WHERE institucion_id = ? ORDER BY nombre`
+  ).bind(instId).all();
   return c.json({ data: results });
 });
 
 app.post("/laboratorios", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const instId = getInstId(c);
   const b = await c.req.json().catch(() => null);
   if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
   const r = await c.env.DB.prepare(
-    `INSERT INTO laboratorio_fabricante (nombre, pais) VALUES (?, ?)`
+    `INSERT INTO laboratorio_fabricante (nombre, pais, institucion_id) VALUES (?, ?, ?)`
   )
-    .bind(b.nombre, b.pais ?? null)
+    .bind(b.nombre, b.pais ?? null, instId)
     .run();
   return c.json({ id: r.meta.last_row_id });
 });
 
 app.get("/proveedores", async (c) => {
+  const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(
     `SELECT id, nombre, nit, contacto, telefono, email, condiciones_pago, activo
-       FROM proveedor WHERE activo = 1 ORDER BY nombre`
-  ).all();
+       FROM proveedor WHERE activo = 1 AND institucion_id = ? ORDER BY nombre`
+  ).bind(instId).all();
   return c.json({ data: results });
 });
 
 app.post("/proveedores", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const instId = getInstId(c);
   const b = await c.req.json().catch(() => null);
   if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
   const r = await c.env.DB.prepare(
-    `INSERT INTO proveedor (nombre, nit, contacto, telefono, email, condiciones_pago)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO proveedor (nombre, nit, contacto, telefono, email, condiciones_pago, institucion_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, b.condiciones_pago ?? null)
+    .bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, b.condiciones_pago ?? null, instId)
     .run();
   return c.json({ id: r.meta.last_row_id });
 });
 
+app.put("/proveedores/:id", requireRole("admin", "jefe_farmacia_central"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE proveedor SET nombre=?, nit=?, contacto=?, telefono=?, email=?, condiciones_pago=? WHERE id=? AND institucion_id=?`
+  )
+    .bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, b.condiciones_pago ?? null, id, instId)
+    .run();
+  return c.json({ ok: true });
+});
+
 app.get("/areas", async (c) => {
+  const instId = getInstId(c);
   const { results } = await c.env.DB.prepare(
-    `SELECT id, nombre, tipo, bajo_llave FROM area ORDER BY nombre`
-  ).all();
+    `SELECT id, nombre, tipo, bajo_llave, activo FROM area WHERE institucion_id = ? ORDER BY nombre`
+  ).bind(instId).all();
+  return c.json({ data: results });
+});
+
+app.put("/areas/:id", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre || !b?.tipo) return c.json({ error: "datos_invalidos" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE area SET nombre=?, tipo=?, bajo_llave=? WHERE id=? AND institucion_id=?`
+  ).bind(b.nombre, b.tipo, b.bajo_llave ? 1 : 0, id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/areas/:id/desactivar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE area SET activo=0 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/areas/:id/activar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE area SET activo=1 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.get("/lotes-producto", async (c) => {
+  const instId = getInstId(c);
+  const pid = c.req.query("producto_id");
+  if (!pid) return c.json({ error: "producto_id_requerido" }, 400);
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, numero_lote, fecha_vencimiento FROM lote
+      WHERE producto_id = ? AND institucion_id = ? ORDER BY fecha_vencimiento ASC`
+  ).bind(parseInt(pid, 10), instId).all();
   return c.json({ data: results });
 });
 
 app.post("/areas", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
   const b = await c.req.json().catch(() => null);
   if (!b?.nombre || !b?.tipo) return c.json({ error: "datos_invalidos" }, 400);
   const r = await c.env.DB.prepare(
-    `INSERT INTO area (nombre, tipo, bajo_llave) VALUES (?, ?, ?)`
+    `INSERT INTO area (nombre, tipo, bajo_llave, institucion_id) VALUES (?, ?, ?, ?)`
   )
-    .bind(b.nombre, b.tipo, b.bajo_llave ? 1 : 0)
+    .bind(b.nombre, b.tipo, b.bajo_llave ? 1 : 0, instId)
     .run();
   return c.json({ id: r.meta.last_row_id });
+});
+
+app.get("/aseguradoras", async (c) => {
+  const instId = getInstId(c);
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, nombre, nit, contacto, telefono, email, activo
+       FROM aseguradora WHERE institucion_id = ? ORDER BY nombre`
+  ).bind(instId).all();
+  return c.json({ data: results });
+});
+
+app.post("/aseguradoras", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  const r = await c.env.DB.prepare(
+    `INSERT INTO aseguradora (nombre, nit, contacto, telefono, email, institucion_id)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, instId).run();
+  return c.json({ id: r.meta.last_row_id });
+});
+
+app.put("/aseguradoras/:id", requireRole("admin", "facturacion"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  const b = await c.req.json().catch(() => null);
+  if (!b?.nombre) return c.json({ error: "nombre_requerido" }, 400);
+  await c.env.DB.prepare(
+    `UPDATE aseguradora SET nombre=?, nit=?, contacto=?, telefono=?, email=? WHERE id=? AND institucion_id=?`
+  ).bind(b.nombre, b.nit ?? null, b.contacto ?? null, b.telefono ?? null, b.email ?? null, id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/aseguradoras/:id/desactivar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE aseguradora SET activo=0 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.post("/aseguradoras/:id/activar", requireRole("admin"), async (c) => {
+  const instId = getInstId(c);
+  const id = parseInt(c.req.param("id"), 10);
+  await c.env.DB.prepare(`UPDATE aseguradora SET activo=1 WHERE id=? AND institucion_id=?`).bind(id, instId).run();
+  return c.json({ ok: true });
+});
+
+app.get("/srs", async (c) => {
+  const q = (c.req.query("q") ?? "").trim();
+  const browse = c.req.query("browse") === "1";
+
+  if (browse) {
+    const page  = Math.max(1, parseInt(c.req.query("page") ?? "1", 10));
+    const limit = 50;
+    const offset = (page - 1) * limit;
+    const where = q.length >= 2
+      ? `AND (nombre_comercial LIKE ? OR principio_activo LIKE ? OR registro_sanitario LIKE ?)`
+      : "";
+    const like = `%${q}%`;
+    const binds: string[] = q.length >= 2 ? [like, like, like] : [];
+
+    const [{ results }, countRow] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT id, registro_sanitario, nombre_comercial, principio_activo,
+                concentracion, forma_farmaceutica, fabricante, pvmp
+           FROM catalogo_srs WHERE estado = 'A' ${where}
+           ORDER BY nombre_comercial
+           LIMIT ${limit} OFFSET ${offset}`
+      ).bind(...binds).all(),
+      c.env.DB.prepare(
+        `SELECT COUNT(*) as total FROM catalogo_srs WHERE estado = 'A' ${where}`
+      ).bind(...binds).first<{ total: number }>(),
+    ]);
+    return c.json({ data: results, total: countRow?.total ?? 0, page, limit });
+  }
+
+  if (q.length < 2) return c.json({ data: [] });
+  const like = `%${q}%`;
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, registro_sanitario, nombre_comercial, principio_activo,
+            concentracion, forma_farmaceutica, fabricante, pvmp
+       FROM catalogo_srs
+      WHERE estado = 'A'
+        AND (nombre_comercial LIKE ? OR principio_activo LIKE ? OR registro_sanitario LIKE ?)
+      LIMIT 20`
+  )
+    .bind(like, like, like)
+    .all();
+  return c.json({ data: results });
 });
 
 export default app;

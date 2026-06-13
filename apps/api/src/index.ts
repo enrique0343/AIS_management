@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Bindings, AppVariables } from "./env";
 import { sessionMiddleware } from "./middleware/auth";
+import { runDailyCierre, runFrequentAlerts } from "./lib/alertas";
 
 import auth from "./routes/auth";
 import catalogos from "./routes/catalogos";
@@ -17,6 +18,11 @@ import habitaciones from "./routes/habitaciones";
 import gastos from "./routes/gastos";
 import reportes from "./routes/reportes";
 import requisiciones from "./routes/requisiciones";
+import honorarios from "./routes/honorarios";
+import notificaciones from "./routes/notificaciones";
+import expediente from "./routes/expediente";
+import citas from "./routes/citas";
+import finanzas from "./routes/finanzas";
 
 const app = new Hono<{ Bindings: Bindings; Variables: AppVariables }>();
 
@@ -27,19 +33,40 @@ app.get("/api/health", (c) =>
 );
 
 app.get("/api/dashboard", async (c) => {
+  const session = c.get("session");
+  const instId = session?.institucion_id ?? 0;
   const queries = await Promise.all([
-    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM producto WHERE activo = 1`).first<{ n: number }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM paciente`).first<{ n: number }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM episodio_atencion WHERE estado = 'activo'`).first<{ n: number }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM cirugia WHERE date(fecha_programada) >= date('now') AND estado IN ('programada','en_curso')`).first<{ n: number }>(),
-    c.env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS t FROM factura WHERE estado = 'pendiente'`).first<{ n: number; t: number }>(),
-    c.env.DB.prepare(`SELECT COALESCE(SUM(monto), 0) AS t FROM pago WHERE date(fecha) = date('now')`).first<{ t: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM producto WHERE activo = 1 AND institucion_id = ?`).bind(instId).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM paciente WHERE institucion_id = ?`).bind(instId).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM episodio_atencion WHERE estado = 'activo' AND institucion_id = ?`).bind(instId).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n FROM cirugia WHERE date(fecha_programada) >= date('now') AND estado IN ('programada','en_curso') AND institucion_id = ?`).bind(instId).first<{ n: number }>(),
+    c.env.DB.prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(total),0) AS t FROM factura WHERE estado = 'pendiente' AND institucion_id = ?`).bind(instId).first<{ n: number; t: number }>(),
+    c.env.DB.prepare(`SELECT COALESCE(SUM(monto), 0) AS t FROM pago WHERE date(fecha) = date('now') AND institucion_id = ?`).bind(instId).first<{ t: number }>(),
     c.env.DB.prepare(
       `SELECT COUNT(*) AS n FROM (
          SELECT e.id FROM episodio_atencion e
-          WHERE EXISTS (SELECT 1 FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL)
+          WHERE e.institucion_id = ?
+            AND EXISTS (SELECT 1 FROM consumo_paciente cp WHERE cp.episodio_id = e.id AND cp.factura_detalle_id IS NULL)
        )`
-    ).first<{ n: number }>(),
+    ).bind(instId).first<{ n: number }>(),
+    c.env.DB.prepare(
+      `SELECT ROUND(
+         COALESCE((
+           SELECT SUM(cp.precio_venta_snapshot * cp.cantidad)
+             FROM consumo_paciente cp
+             JOIN episodio_atencion e ON e.id = cp.episodio_id
+            WHERE e.estado = 'activo' AND cp.factura_detalle_id IS NULL AND e.institucion_id = ?
+         ), 0) +
+         COALESCE((
+           SELECT SUM(
+             MAX(CAST((julianday(COALESCE(oh.fecha_egreso, datetime('now'))) - julianday(oh.fecha_ingreso)) AS INTEGER), 1)
+             * oh.precio_diario_snapshot
+           )
+             FROM ocupacion_habitacion oh
+             JOIN episodio_atencion e2 ON e2.id = oh.episodio_id
+            WHERE e2.estado = 'activo' AND oh.factura_detalle_id IS NULL AND e2.institucion_id = ?
+         ), 0), 2) AS t`
+    ).bind(instId, instId).first<{ t: number }>(),
   ]);
   return c.json({
     productos: queries[0]?.n ?? 0,
@@ -50,6 +77,7 @@ app.get("/api/dashboard", async (c) => {
     monto_pendiente: queries[4]?.t ?? 0,
     ingresos_hoy: queries[5]?.t ?? 0,
     episodios_por_facturar: queries[6]?.n ?? 0,
+    total_por_facturar: queries[7]?.t ?? 0,
   });
 });
 
@@ -68,6 +96,11 @@ app.route("/api/habitaciones", habitaciones);
 app.route("/api/gastos", gastos);
 app.route("/api/reportes", reportes);
 app.route("/api/requisiciones", requisiciones);
+app.route("/api/honorarios", honorarios);
+app.route("/api/notificaciones", notificaciones);
+app.route("/api/expediente", expediente);
+app.route("/api/citas", citas);
+app.route("/api/finanzas", finanzas);
 
 app.onError((err, c) => {
   console.error(err);
@@ -80,4 +113,13 @@ app.all("/api/*", (c) => c.json({ error: "not_found", path: c.req.path }, 404));
 // Cualquier otra ruta -> servir SPA (Workers Assets con SPA fallback).
 app.all("*", (c) => c.env.ASSETS.fetch(c.req.raw));
 
-export default app;
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      event.cron === "0 7 * * *"
+        ? runDailyCierre(env)
+        : runFrequentAlerts(env)
+    );
+  },
+};

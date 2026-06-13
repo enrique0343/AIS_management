@@ -17,16 +17,18 @@ export async function planFEFO(
   env: Bindings,
   productoId: number,
   areaId: number,
-  cantidad: number
+  cantidad: number,
+  institucionId = 1
 ): Promise<{ lote_id: number | null; tomar: number }[]> {
   const rows = await env.DB.prepare(
     `SELECT e.lote_id, l.numero_lote, l.fecha_vencimiento, e.cantidad
        FROM existencia e
        LEFT JOIN lote l ON l.id = e.lote_id
       WHERE e.producto_id = ? AND e.area_id = ? AND e.cantidad > 0
+        AND e.institucion_id = ?
       ORDER BY (l.fecha_vencimiento IS NULL) ASC, l.fecha_vencimiento ASC, e.lote_id ASC`
   )
-    .bind(productoId, areaId)
+    .bind(productoId, areaId, institucionId)
     .all<LoteDisponible>();
 
   let restante = cantidad;

@@ -3,6 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Dominios configurados via Cloudflare Dashboard (no via wrangler.toml):
+# El API token de CI solo tiene Workers Scripts:Edit, no Zone:Workers Routes:Edit.
+# Ir a: Workers & Pages → ais-management-api → Settings → Domains & Routes
+#   → Add Custom Domain: ais.worke.net
+#   → Add Custom Domain: psc.ais.worke.net  (y cada cliente nuevo)
+
 [vars]
 APP_ENV = "production"
 SESSION_TTL_SECONDS = "28800"
@@ -28,3 +34,8 @@ id = "a207f2115d374319bbbefe3378ef2dc1"
 [[r2_buckets]]
 binding = "DOCS"
 bucket_name = "ais-docs"
+
+[triggers]
+crons = ["0 7 * * *", "0 */4 * * *"]
+# 07:00 UTC diario  → cierre + alertas de lotes/seguros/honorarios
+# cada 4 horas      → alertas de stock bajo
